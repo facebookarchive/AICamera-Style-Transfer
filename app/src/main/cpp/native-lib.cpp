@@ -17,7 +17,7 @@
 #define IMG_W 227
 #define IMG_C 3
 #define MAX_DATA_SIZE IMG_H * IMG_W * IMG_C
-#define alog(...) __android_log_print(ANDROID_LOG_ERROR, "F8DEMO", __VA_ARGS__);
+#define alog(...) __android_log_print(ANDROID_LOG_ERROR, "styletransfer", __VA_ARGS__);
 
 static caffe2::NetDef _initNet, _predictNet;
 static caffe2::Predictor *_predictor;
@@ -41,7 +41,7 @@ void loadToNetDef(AAssetManager* mgr, caffe2::NetDef* net, const char *filename)
 
 extern "C"
 void
-Java_facebook_f8demo_ClassifyCamera_initCaffe2(
+Java_facebook_styletransfer_StyleTransfer_initCaffe2(
         JNIEnv* env,
         jobject /* this */,
         jobject assetManager) {
@@ -61,7 +61,7 @@ int iters_fps = 10;
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_facebook_f8demo_ClassifyCamera_classificationFromCaffe2(
+Java_facebook_styletransfer_StyleTransfer_classificationFromCaffe2(
         JNIEnv *env,
         jobject /* this */,
         jint h, jint w, jbyteArray Y, jbyteArray U, jbyteArray V,
