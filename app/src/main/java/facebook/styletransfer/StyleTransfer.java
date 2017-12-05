@@ -4,7 +4,6 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.content.res.AssetManager;
 import android.graphics.ImageFormat;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
@@ -17,17 +16,12 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
-import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.support.annotation.NonNull;
-import android.support.v4.app.ActivityCompat;
-import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 import android.util.Size;
-import android.view.GestureDetector;
-import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
@@ -35,16 +29,14 @@ import android.view.Window;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
 
 import static android.support.v4.content.PermissionChecker.PERMISSION_GRANTED;
 import static android.view.View.SYSTEM_UI_FLAG_IMMERSIVE;
 
-public class StyleTransfer extends Activity implements TextureView.SurfaceTextureListener {
+public class StyleTransfer extends Activity {
     private class CameraStateCallback extends CameraDevice.StateCallback {
-
         @Override
         public void onOpened(@NonNull CameraDevice camera) {
             mCameraDevice = camera;
@@ -58,8 +50,10 @@ public class StyleTransfer extends Activity implements TextureView.SurfaceTextur
 
         @Override
         public void onError(@NonNull CameraDevice camera, int error) {
-            camera.close();
-            mCameraDevice = null;
+            if (mCameraDevice != null) {
+                mCameraDevice.close();
+                mCameraDevice = null;
+            }
         }
     }
 
@@ -97,6 +91,28 @@ public class StyleTransfer extends Activity implements TextureView.SurfaceTextur
         }
     }
 
+    private class TextureViewListener implements TextureView.SurfaceTextureListener {
+        @Override
+        public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
+            openCamera();
+        }
+
+        @Override
+        public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
+
+        }
+
+        @Override
+        public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
+            return true;
+        }
+
+        @Override
+        public void onSurfaceTextureUpdated(SurfaceTexture surface) {
+
+        }
+    }
+
     private static class OnImageAvailableCallback implements ImageReader.OnImageAvailableListener {
         @Override
         public void onImageAvailable(ImageReader reader) {
@@ -109,7 +125,7 @@ public class StyleTransfer extends Activity implements TextureView.SurfaceTextur
                 }
             }
         }
-    };
+    }
 
     private static final String TAG = "StyleTransfer";
     private static final int REQUEST_CAMERA_PERMISSION = 200;
@@ -119,11 +135,11 @@ public class StyleTransfer extends Activity implements TextureView.SurfaceTextur
     private String mCameraId;
     private Size mPreviewSize;
     private TextureView mTextureView;
-    private final CameraStateCallback cameraStateCallback = new CameraStateCallback();
     private Handler mBackgroundHandler;
-    private HandlerThread mBackgroundThread;
     private CaptureRequest.Builder mCaptureRequestBuilder;
-    private TextView tv;
+    private HandlerThread mBackgroundThread;
+    private final TextureViewListener mTextureViewListener = new TextureViewListener();
+    private final CameraStateCallback cameraStateCallback = new CameraStateCallback();
 
 
     @Override
@@ -131,19 +147,17 @@ public class StyleTransfer extends Activity implements TextureView.SurfaceTextur
         super.onCreate(savedInstanceState);
 
         // Turn off the title at the top of the screen.
-        this.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        requestWindowFeature(Window.FEATURE_NO_TITLE);
 
         View decorView = getWindow().getDecorView();
         decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
 
-        setContentView(R.layout.activity_classify_camera);
+        setContentView(R.layout.activity_styletransfer);
 
         mTextureView = (TextureView) findViewById(R.id.textureView);
         mTextureView.setSystemUiVisibility(SYSTEM_UI_FLAG_IMMERSIVE);
 
-        mTextureView.setSurfaceTextureListener(this);
-        tv = (TextView) findViewById(R.id.sample_text);
-//        tv.setText("foooooooooo");
+        mTextureView.setSurfaceTextureListener(mTextureViewListener);
     }
 
     protected void createCameraPreview() {
@@ -175,23 +189,6 @@ public class StyleTransfer extends Activity implements TextureView.SurfaceTextur
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
-    }
-
-    public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
-        openCamera();
-    }
-
-
-    public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
-
-    }
-
-    public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
-        return true;
-    }
-
-    public void onSurfaceTextureUpdated(SurfaceTexture surface) {
-
     }
 
     private void openCamera() {
@@ -232,14 +229,14 @@ public class StyleTransfer extends Activity implements TextureView.SurfaceTextur
         }
     }
 
-        @Override
+    @Override
     protected void onResume() {
         super.onResume();
         startBackgroundThread();
         if (mTextureView.isAvailable()) {
             openCamera();
         } else {
-            mTextureView.setSurfaceTextureListener(this);
+            mTextureView.setSurfaceTextureListener(mTextureViewListener);
         }
     }
 
@@ -270,8 +267,6 @@ public class StyleTransfer extends Activity implements TextureView.SurfaceTextur
             e.printStackTrace();
         }
     }
-
-
 }
 
 //public class StyleTransfer extends AppCompatActivity {
