@@ -140,20 +140,21 @@ public class StyleTransfer extends Activity {
         @Override
         public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
             if (velocityX > 0) {
-                if (mStyleIndex < NUMBER_OF_STYLES - 1) {
-                    mStyleIndex += 1;
-//                    FrameLayout layout = (FrameLayout)findViewById(R.id.layout);
-//                    layout.removeAllViews();
-//                    layout.addView(mImageView);
+                if (mStyleIndex > 0) {
+                    if (mStyleIndex == 1) {
+                        mViewSwitcher.showPrevious();
+                    }
+                    mStyleIndex -= 1;
                 }
                 Log.d(TAG, "Swipe right: " + mStyleIndex);
             } else if (velocityX < 0) {
-                if (mStyleIndex > 0) {
-                    mStyleIndex -= 1;
-//                    FrameLayout layout = (FrameLayout)findViewById(R.id.layout);
-//                    layout.removeAllViews();
-//                    layout.addView(mTextureView);
+                if (mStyleIndex < NUMBER_OF_STYLES - 1) {
+                    if (mStyleIndex == 0) {
+                        mViewSwitcher.showNext();
+                    }
+                    mStyleIndex += 1;
                 }
+
                 Log.d(TAG, "Swipe left: " + mStyleIndex);
             }
             return true;
@@ -229,6 +230,7 @@ public class StyleTransfer extends Activity {
     private HandlerThread mBackgroundThread;
     private int mStyleIndex = 0;
     private GestureDetector mGestureDetector;
+    private ViewSwitcher mViewSwitcher;
     private final TextureViewListener mTextureViewListener = new TextureViewListener();
     private final CameraStateCallback cameraStateCallback = new CameraStateCallback();
 
@@ -245,56 +247,18 @@ public class StyleTransfer extends Activity {
 
         setContentView(R.layout.activity_styletransfer);
 
-        final ViewSwitcher viewSwitcher = (ViewSwitcher)findViewById(R.id.view_switcher);
-//
-//        Log.d(TAG, "???????????????????????????????????????????????????????");
-//        final TextView tv = (TextView)findViewById(R.id.textView);
-//        Log.d(TAG, tv.getText().toString());
-//
-//
-        viewSwitcher.setOnTouchListener(new View.OnTouchListener() {
-            Integer x = 0;
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                Log.d(TAG, "HELOOOooooojdfiuoifjsdfovfadsf");
-                if (++x % 2 == 0) {
-                    viewSwitcher.showNext();
-                } else {
-                    viewSwitcher.showPrevious();
-                }
-                return true;
-            }
-        });
+        mViewSwitcher = (ViewSwitcher)findViewById(R.id.view_switcher);
 
         mImageView = (ImageView) findViewById(R.id.imageView);
         mImageView.setImageResource(R.mipmap.cat);
-//
-//        mTextureView = (TextureView) findViewById(R.id.textureView);
-//        mTextureView.setSystemUiVisibility(SYSTEM_UI_FLAG_IMMERSIVE);
-//        mTextureView.setSurfaceTextureListener(mTextureViewListener);
-//
-//        final FrameLayout layout = (FrameLayout)findViewById(R.id.layout);
-//        assert layout != null;
-//        layout.removeView(mImageView);
-//
-//        final TextView tv = (TextView)findViewById(R.id.textView);
-//        Log.d(TAG, tv.getText().toString());
 
-//        createControls();
-    }
+        mTextureView = (TextureView) findViewById(R.id.textureView);
+        mTextureView.setSystemUiVisibility(SYSTEM_UI_FLAG_IMMERSIVE);
+        mTextureView.setSurfaceTextureListener(mTextureViewListener);
 
-    private void createControls() {
         mGestureDetector = new GestureDetector(getApplicationContext(), new GestureListener());
 
-        mImageView.setOnTouchListener(new View.OnTouchListener(){
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                mGestureDetector.onTouchEvent(event);
-                return true;
-            }
-        });
-
-        mTextureView.setOnTouchListener(new View.OnTouchListener() {
+        mViewSwitcher.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
                 mGestureDetector.onTouchEvent(event);
