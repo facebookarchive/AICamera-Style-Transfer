@@ -16,21 +16,33 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.support.annotation.NonNull;
 import android.util.Log;
 import android.util.Size;
+import android.view.DragEvent;
+import android.view.GestureDetector;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.Window;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.ViewSwitcher;
 
+import org.w3c.dom.Text;
+
+import java.net.URI;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static android.support.v4.content.PermissionChecker.PERMISSION_GRANTED;
 import static android.view.View.SYSTEM_UI_FLAG_IMMERSIVE;
@@ -68,7 +80,11 @@ public class StyleTransfer extends Activity {
 
         @Override
         public void onConfigureFailed(@NonNull CameraCaptureSession session) {
-            Toast toast = Toast.makeText(getApplicationContext(), "Configuration change", Toast.LENGTH_SHORT);
+            Toast toast = Toast.makeText(
+                    getApplicationContext(),
+                    "Configuration failed",
+                    Toast.LENGTH_SHORT
+            );
             toast.show();
         }
 
@@ -113,12 +129,83 @@ public class StyleTransfer extends Activity {
         }
     }
 
-    private static class OnImageAvailableCallback implements ImageReader.OnImageAvailableListener {
+    private class GestureListener extends GestureDetector.SimpleOnGestureListener {
+        @Override
+        public boolean onDoubleTap(MotionEvent e) {
+            mStyleIndex = 0;
+            Log.d(TAG, "Double tap (reset)");
+            return true;
+        }
+
+        @Override
+        public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
+            if (velocityX > 0) {
+                if (mStyleIndex < NUMBER_OF_STYLES - 1) {
+                    mStyleIndex += 1;
+//                    FrameLayout layout = (FrameLayout)findViewById(R.id.layout);
+//                    layout.removeAllViews();
+//                    layout.addView(mImageView);
+                }
+                Log.d(TAG, "Swipe right: " + mStyleIndex);
+            } else if (velocityX < 0) {
+                if (mStyleIndex > 0) {
+                    mStyleIndex -= 1;
+//                    FrameLayout layout = (FrameLayout)findViewById(R.id.layout);
+//                    layout.removeAllViews();
+//                    layout.addView(mTextureView);
+                }
+                Log.d(TAG, "Swipe left: " + mStyleIndex);
+            }
+            return true;
+        }
+
+    }
+
+    private class OnImageAvailableCallback implements ImageReader.OnImageAvailableListener {
+
+        private AtomicBoolean isProcessing = new AtomicBoolean(false);
+
         @Override
         public void onImageAvailable(ImageReader reader) {
             Image image = null;
             try {
                 image = reader.acquireLatestImage();
+
+
+//                if (isProcessing.get()) {
+//                    image.close();
+//                    return;
+//                }
+//                isProcessing.set(true);
+//
+//
+//                final ByteBuffer Ybuffer = image.getPlanes()[0].getBuffer();
+//                final ByteBuffer Ubuffer = image.getPlanes()[1].getBuffer();
+//                final ByteBuffer Vbuffer = image.getPlanes()[2].getBuffer();
+//
+//
+////                int rowStride = image.getPlanes()[1].getRowStride();
+////                int pixelStride = image.getPlanes()[1].getPixelStride();
+//
+//                byte[] Y = new byte[Ybuffer.capacity()];
+//                byte[] U = new byte[Ubuffer.capacity()];
+//                byte[] V = new byte[Vbuffer.capacity()];
+//                Ybuffer.get(Y);
+//                Ubuffer.get(U);
+//                Vbuffer.get(V);
+//
+////                predictedClass = classificationFromCaffe2(h, w, Y, U, V,
+////                        rowStride, pixelStride, run_HWC);
+//
+//                runOnUiThread(new Runnable() {
+//                    @Override
+//                    public void run() {
+////                        Log.d(TAG, "Done processing");
+//                        isProcessing.set(false);
+//                    }
+//                });
+
+
             } finally {
                 if (image != null) {
                     image.close();
@@ -129,15 +216,19 @@ public class StyleTransfer extends Activity {
 
     private static final String TAG = "StyleTransfer";
     private static final int REQUEST_CAMERA_PERMISSION = 200;
+    private static final int NUMBER_OF_STYLES = 3;
 
     private CameraDevice mCameraDevice;
     private CameraCaptureSession mCameraCaptureSession;
     private String mCameraId;
     private Size mPreviewSize;
     private TextureView mTextureView;
+    private ImageView mImageView;
     private Handler mBackgroundHandler;
     private CaptureRequest.Builder mCaptureRequestBuilder;
     private HandlerThread mBackgroundThread;
+    private int mStyleIndex = 0;
+    private GestureDetector mGestureDetector;
     private final TextureViewListener mTextureViewListener = new TextureViewListener();
     private final CameraStateCallback cameraStateCallback = new CameraStateCallback();
 
@@ -149,23 +240,75 @@ public class StyleTransfer extends Activity {
         // Turn off the title at the top of the screen.
         requestWindowFeature(Window.FEATURE_NO_TITLE);
 
-        View decorView = getWindow().getDecorView();
+        final View decorView = getWindow().getDecorView();
         decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
 
         setContentView(R.layout.activity_styletransfer);
 
-        mTextureView = (TextureView) findViewById(R.id.textureView);
-        mTextureView.setSystemUiVisibility(SYSTEM_UI_FLAG_IMMERSIVE);
+        final ViewSwitcher viewSwitcher = (ViewSwitcher)findViewById(R.id.view_switcher);
+//
+//        Log.d(TAG, "???????????????????????????????????????????????????????");
+//        final TextView tv = (TextView)findViewById(R.id.textView);
+//        Log.d(TAG, tv.getText().toString());
+//
+//
+        viewSwitcher.setOnTouchListener(new View.OnTouchListener() {
+            Integer x = 0;
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                Log.d(TAG, "HELOOOooooojdfiuoifjsdfovfadsf");
+                if (++x % 2 == 0) {
+                    viewSwitcher.showNext();
+                } else {
+                    viewSwitcher.showPrevious();
+                }
+                return true;
+            }
+        });
 
-        mTextureView.setSurfaceTextureListener(mTextureViewListener);
+        mImageView = (ImageView) findViewById(R.id.imageView);
+        mImageView.setImageResource(R.mipmap.cat);
+//
+//        mTextureView = (TextureView) findViewById(R.id.textureView);
+//        mTextureView.setSystemUiVisibility(SYSTEM_UI_FLAG_IMMERSIVE);
+//        mTextureView.setSurfaceTextureListener(mTextureViewListener);
+//
+//        final FrameLayout layout = (FrameLayout)findViewById(R.id.layout);
+//        assert layout != null;
+//        layout.removeView(mImageView);
+//
+//        final TextView tv = (TextView)findViewById(R.id.textView);
+//        Log.d(TAG, tv.getText().toString());
+
+//        createControls();
+    }
+
+    private void createControls() {
+        mGestureDetector = new GestureDetector(getApplicationContext(), new GestureListener());
+
+        mImageView.setOnTouchListener(new View.OnTouchListener(){
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                mGestureDetector.onTouchEvent(event);
+                return true;
+            }
+        });
+
+        mTextureView.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                mGestureDetector.onTouchEvent(event);
+                return true;
+            }
+        });
     }
 
     protected void createCameraPreview() {
         try {
-            SurfaceTexture texture = mTextureView.getSurfaceTexture();
+            final SurfaceTexture texture = mTextureView.getSurfaceTexture();
             assert texture != null;
             texture.setDefaultBufferSize(mPreviewSize.getWidth(), mPreviewSize.getHeight());
-            Surface surface = new Surface(texture);
+            final Surface surface = new Surface(texture);
 
             ImageReader imageReader = ImageReader.newInstance(
                     mPreviewSize.getWidth(),
@@ -181,7 +324,7 @@ public class StyleTransfer extends Activity {
             mCaptureRequestBuilder.addTarget(surface);
             mCaptureRequestBuilder.addTarget(imageReader.getSurface());
 
-            List<Surface> surfaces = Arrays.asList(surface, imageReader.getSurface());
+            final List<Surface> surfaces = Arrays.asList(surface, imageReader.getSurface());
             CameraCaptureSessionStateCallback callback = new CameraCaptureSessionStateCallback();
             mCameraDevice.createCaptureSession(surfaces, callback, null);
 
@@ -233,10 +376,12 @@ public class StyleTransfer extends Activity {
     protected void onResume() {
         super.onResume();
         startBackgroundThread();
-        if (mTextureView.isAvailable()) {
-            openCamera();
-        } else {
-            mTextureView.setSurfaceTextureListener(mTextureViewListener);
+        if (mTextureView != null) {
+            if (mTextureView.isAvailable()) {
+                openCamera();
+            } else {
+                mTextureView.setSurfaceTextureListener(mTextureViewListener);
+            }
         }
     }
 
@@ -349,6 +494,7 @@ public class StyleTransfer extends Activity {
 //                    public boolean onDown(MotionEvent e) {
 //                        return true;
 //                    }
+//                });
 //                });
 //
 //        textureView.setOnTouchListener(new View.OnTouchListener() {
