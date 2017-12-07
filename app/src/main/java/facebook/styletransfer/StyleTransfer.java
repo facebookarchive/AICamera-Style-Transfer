@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.content.res.AssetManager;
 import android.graphics.ImageFormat;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
@@ -17,6 +18,7 @@ import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -40,6 +42,7 @@ import android.widget.ViewSwitcher;
 import org.w3c.dom.Text;
 
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -162,6 +165,33 @@ public class StyleTransfer extends Activity {
 
     }
 
+    static {
+        System.loadLibrary("native-lib");
+    }
+
+    public native byte[] transformImageWithCaffe2(
+            int height,
+            int width,
+            byte[] Y,
+            byte[] U,
+            byte[] V,
+            int rowStride,
+            int pixelStride);
+
+    public native void initCaffe2(AssetManager mgr);
+
+    private final class SetUpNeuralNetwork extends AsyncTask<Void, Void, Void> {
+        @Override
+        protected Void doInBackground(Void[] v) {
+            try {
+                initCaffe2(mAssetManager);
+            } catch (Exception e) {
+                Log.d(TAG, "Couldn't load neural network.");
+            }
+            return null;
+        }
+    }
+
     private class OnImageAvailableCallback implements ImageReader.OnImageAvailableListener {
 
         private AtomicBoolean isProcessing = new AtomicBoolean(false);
@@ -172,40 +202,44 @@ public class StyleTransfer extends Activity {
             try {
                 image = reader.acquireLatestImage();
 
+                if (isProcessing.get() || mStyleIndex == 0) {
+                    image.close();
+                    return;
+                }
 
-//                if (isProcessing.get()) {
-//                    image.close();
-//                    return;
-//                }
-//                isProcessing.set(true);
-//
-//
-//                final ByteBuffer Ybuffer = image.getPlanes()[0].getBuffer();
-//                final ByteBuffer Ubuffer = image.getPlanes()[1].getBuffer();
-//                final ByteBuffer Vbuffer = image.getPlanes()[2].getBuffer();
-//
-//
-////                int rowStride = image.getPlanes()[1].getRowStride();
-////                int pixelStride = image.getPlanes()[1].getPixelStride();
-//
-//                byte[] Y = new byte[Ybuffer.capacity()];
-//                byte[] U = new byte[Ubuffer.capacity()];
-//                byte[] V = new byte[Vbuffer.capacity()];
-//                Ybuffer.get(Y);
-//                Ubuffer.get(U);
-//                Vbuffer.get(V);
-//
-////                predictedClass = classificationFromCaffe2(h, w, Y, U, V,
-////                        rowStride, pixelStride, run_HWC);
-//
-//                runOnUiThread(new Runnable() {
-//                    @Override
-//                    public void run() {
-////                        Log.d(TAG, "Done processing");
-//                        isProcessing.set(false);
-//                    }
-//                });
+                isProcessing.set(true);
 
+                Log.d(TAG, "style indeX: " + mStyleIndex);
+
+                final ByteBuffer Ybuffer = image.getPlanes()[0].getBuffer();
+                final ByteBuffer Ubuffer = image.getPlanes()[1].getBuffer();
+                final ByteBuffer Vbuffer = image.getPlanes()[2].getBuffer();
+                final byte[] Y = new byte[Ybuffer.capacity()];
+                final byte[] U = new byte[Ubuffer.capacity()];
+                final byte[] V = new byte[Vbuffer.capacity()];
+                Ybuffer.get(Y);
+                Ubuffer.get(U);
+                Vbuffer.get(V);
+
+                final int rowStride = image.getPlanes()[1].getRowStride();
+                final int pixelStride = image.getPlanes()[1].getPixelStride();
+
+                final byte[] transformedImage = transformImageWithCaffe2(
+                        image.getHeight(),
+                        image.getWidth(),
+                        Y,
+                        U,
+                        V,
+                        rowStride,
+                        pixelStride);
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Log.d(TAG, "Done processing: " + transformedImage.length + " " + Y.length);
+                        isProcessing.set(false);
+                    }
+                });
 
             } finally {
                 if (image != null) {
@@ -231,6 +265,7 @@ public class StyleTransfer extends Activity {
     private int mStyleIndex = 0;
     private GestureDetector mGestureDetector;
     private ViewSwitcher mViewSwitcher;
+    private AssetManager mAssetManager;
     private final TextureViewListener mTextureViewListener = new TextureViewListener();
     private final CameraStateCallback cameraStateCallback = new CameraStateCallback();
 
@@ -265,6 +300,10 @@ public class StyleTransfer extends Activity {
                 return true;
             }
         });
+
+        mAssetManager = getResources().getAssets();
+
+        new facebook.styletransfer.StyleTransfer.SetUpNeuralNetwork().execute();
     }
 
     protected void createCameraPreview() {

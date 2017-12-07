@@ -60,120 +60,136 @@ float total_fps = 0.0;
 int iters_fps = 10;
 
 extern "C"
-JNIEXPORT jstring JNICALL
-Java_facebook_styletransfer_StyleTransfer_classificationFromCaffe2(
+JNIEXPORT jbyteArray JNICALL
+Java_facebook_styletransfer_StyleTransfer_transformImageWithCaffe2(
         JNIEnv *env,
         jobject /* this */,
-        jint h, jint w, jbyteArray Y, jbyteArray U, jbyteArray V,
-        jint rowStride, jint pixelStride,
-        jboolean infer_HWC) {
-    if (!_predictor) {
-        return env->NewStringUTF("Loading...");
-    }
-    jsize Y_len = env->GetArrayLength(Y);
-    jbyte * Y_data = env->GetByteArrayElements(Y, 0);
-    assert(Y_len <= MAX_DATA_SIZE);
-    jsize U_len = env->GetArrayLength(U);
-    jbyte * U_data = env->GetByteArrayElements(U, 0);
-    assert(U_len <= MAX_DATA_SIZE);
-    jsize V_len = env->GetArrayLength(V);
-    jbyte * V_data = env->GetByteArrayElements(V, 0);
-    assert(V_len <= MAX_DATA_SIZE);
+        jint height,
+        jint width,
+        jbyteArray Y,
+        jbyteArray U,
+        jbyteArray V,
+        jint rowStride,
+        jint pixelStride) {
 
-#define min(a,b) ((a) > (b)) ? (b) : (a)
-#define max(a,b) ((a) > (b)) ? (a) : (b)
+    const int totalLength = height * width * 3;
+    jbyteArray output = env->NewByteArray(totalLength);
 
-    auto h_offset = max(0, (h - IMG_H) / 2);
-    auto w_offset = max(0, (w - IMG_W) / 2);
-
-    auto iter_h = IMG_H;
-    auto iter_w = IMG_W;
-    if (h < IMG_H) {
-        iter_h = h;
-    }
-    if (w < IMG_W) {
-        iter_w = w;
+    for (int i = 0, j = 0; i < totalLength; i += 3, j += 1) {
+        output[i] = Y[j];
+        output[i + 1] = U[j];
+        output[i + 2] = V[j];
     }
 
-    for (auto i = 0; i < iter_h; ++i) {
-        jbyte* Y_row = &Y_data[(h_offset + i) * w];
-        jbyte* U_row = &U_data[(h_offset + i) / 4 * rowStride];
-        jbyte* V_row = &V_data[(h_offset + i) / 4 * rowStride];
-        for (auto j = 0; j < iter_w; ++j) {
-            // Tested on Pixel and S7.
-            char y = Y_row[w_offset + j];
-            char u = U_row[pixelStride * ((w_offset+j)/pixelStride)];
-            char v = V_row[pixelStride * ((w_offset+j)/pixelStride)];
+    return output;
 
-            float b_mean = 104.00698793f;
-            float g_mean = 116.66876762f;
-            float r_mean = 122.67891434f;
-
-            auto b_i = 0 * IMG_H * IMG_W + j * IMG_W + i;
-            auto g_i = 1 * IMG_H * IMG_W + j * IMG_W + i;
-            auto r_i = 2 * IMG_H * IMG_W + j * IMG_W + i;
-
-            if (infer_HWC) {
-                b_i = (j * IMG_W + i) * IMG_C;
-                g_i = (j * IMG_W + i) * IMG_C + 1;
-                r_i = (j * IMG_W + i) * IMG_C + 2;
-            }
-/*
-  R = Y + 1.402 (V-128)
-  G = Y - 0.34414 (U-128) - 0.71414 (V-128)
-  B = Y + 1.772 (U-V)
- */
-            input_data[r_i] = -r_mean + (float) ((float) min(255., max(0., (float) (y + 1.402 * (v - 128)))));
-            input_data[g_i] = -g_mean + (float) ((float) min(255., max(0., (float) (y - 0.34414 * (u - 128) - 0.71414 * (v - 128)))));
-            input_data[b_i] = -b_mean + (float) ((float) min(255., max(0., (float) (y + 1.772 * (u - v)))));
-
-        }
-    }
-
-    caffe2::TensorCPU input;
-    if (infer_HWC) {
-        input.Resize(std::vector<int>({IMG_H, IMG_W, IMG_C}));
-    } else {
-        input.Resize(std::vector<int>({1, IMG_C, IMG_H, IMG_W}));
-    }
-    memcpy(input.mutable_data<float>(), input_data, IMG_H * IMG_W * IMG_C * sizeof(float));
-    caffe2::Predictor::TensorVector input_vec{&input};
-    caffe2::Predictor::TensorVector output_vec;
-    caffe2::Timer t;
-    t.Start();
-    _predictor->run(input_vec, &output_vec);
-    float fps = 1000/t.MilliSeconds();
-    total_fps += fps;
-    avg_fps = total_fps / iters_fps;
-    total_fps -= avg_fps;
-
-    constexpr int k = 5;
-    float max[k] = {0};
-    int max_index[k] = {0};
-    // Find the top-k results manually.
-    if (output_vec.capacity() > 0) {
-        for (auto output : output_vec) {
-            for (auto i = 0; i < output->size(); ++i) {
-                for (auto j = 0; j < k; ++j) {
-                    if (output->template data<float>()[i] > max[j]) {
-                        for (auto _j = k - 1; _j > j; --_j) {
-                            max[_j - 1] = max[_j];
-                            max_index[_j - 1] = max_index[_j];
-                        }
-                        max[j] = output->template data<float>()[i];
-                        max_index[j] = i;
-                        goto skip;
-                    }
-                }
-                skip:;
-            }
-        }
-    }
-    std::ostringstream stringStream;
-    stringStream << avg_fps << " FPS\n";
-
-    for (auto j = 0; j < k; ++j) {
-        stringStream << j << ": " << imagenet_classes[max_index[j]] << " - " << max[j] / 10 << "%\n";
-    }
-    return env->NewStringUTF(stringStream.str().c_str());
+//    if (!_predictor) {
+//        return env->NewStringUTF("Loading...");
+//    }
+//    jsize Y_len = env->GetArrayLength(Y);
+//    jbyte * Y_data = env->GetByteArrayElements(Y, 0);
+//    assert(Y_len <= MAX_DATA_SIZE);
+//    jsize U_len = env->GetArrayLength(U);
+//    jbyte * U_data = env->GetByteArrayElements(U, 0);
+//    assert(U_len <= MAX_DATA_SIZE);
+//    jsize V_len = env->GetArrayLength(V);
+//    jbyte * V_data = env->GetByteArrayElements(V, 0);
+//    assert(V_len <= MAX_DATA_SIZE);
+//
+//#define min(a,b) ((a) > (b)) ? (b) : (a)
+//#define max(a,b) ((a) > (b)) ? (a) : (b)
+//
+//    auto h_offset = max(0, (h - IMG_H) / 2);
+//    auto w_offset = max(0, (w - IMG_W) / 2);
+//
+//    auto iter_h = IMG_H;
+//    auto iter_w = IMG_W;
+//    if (h < IMG_H) {
+//        iter_h = h;
+//    }
+//    if (w < IMG_W) {
+//        iter_w = w;
+//    }
+//
+//    for (auto i = 0; i < iter_h; ++i) {
+//        jbyte* Y_row = &Y_data[(h_offset + i) * w];
+//        jbyte* U_row = &U_data[(h_offset + i) / 4 * rowStride];
+//        jbyte* V_row = &V_data[(h_offset + i) / 4 * rowStride];
+//        for (auto j = 0; j < iter_w; ++j) {
+//            // Tested on Pixel and S7.
+//            char y = Y_row[w_offset + j];
+//            char u = U_row[pixelStride * ((w_offset+j)/pixelStride)];
+//            char v = V_row[pixelStride * ((w_offset+j)/pixelStride)];
+//
+//            float b_mean = 104.00698793f;
+//            float g_mean = 116.66876762f;
+//            float r_mean = 122.67891434f;
+//
+//            auto b_i = 0 * IMG_H * IMG_W + j * IMG_W + i;
+//            auto g_i = 1 * IMG_H * IMG_W + j * IMG_W + i;
+//            auto r_i = 2 * IMG_H * IMG_W + j * IMG_W + i;
+//
+//            if (infer_HWC) {
+//                b_i = (j * IMG_W + i) * IMG_C;
+//                g_i = (j * IMG_W + i) * IMG_C + 1;
+//                r_i = (j * IMG_W + i) * IMG_C + 2;
+//            }
+///*
+//  R = Y + 1.402 (V-128)
+//  G = Y - 0.34414 (U-128) - 0.71414 (V-128)
+//  B = Y + 1.772 (U-V)
+// */
+//            input_data[r_i] = -r_mean + (float) ((float) min(255., max(0., (float) (y + 1.402 * (v - 128)))));
+//            input_data[g_i] = -g_mean + (float) ((float) min(255., max(0., (float) (y - 0.34414 * (u - 128) - 0.71414 * (v - 128)))));
+//            input_data[b_i] = -b_mean + (float) ((float) min(255., max(0., (float) (y + 1.772 * (u - v)))));
+//
+//        }
+//    }
+//
+//    caffe2::TensorCPU input;
+//    if (infer_HWC) {
+//        input.Resize(std::vector<int>({IMG_H, IMG_W, IMG_C}));
+//    } else {
+//        input.Resize(std::vector<int>({1, IMG_C, IMG_H, IMG_W}));
+//    }
+//    memcpy(input.mutable_data<float>(), input_data, IMG_H * IMG_W * IMG_C * sizeof(float));
+//    caffe2::Predictor::TensorVector input_vec{&input};
+//    caffe2::Predictor::TensorVector output_vec;
+//    caffe2::Timer t;
+//    t.Start();
+//    _predictor->run(input_vec, &output_vec);
+//    float fps = 1000/t.MilliSeconds();
+//    total_fps += fps;
+//    avg_fps = total_fps / iters_fps;
+//    total_fps -= avg_fps;
+//
+//    constexpr int k = 5;
+//    float max[k] = {0};
+//    int max_index[k] = {0};
+//    // Find the top-k results manually.
+//    if (output_vec.capacity() > 0) {
+//        for (auto output : output_vec) {
+//            for (auto i = 0; i < output->size(); ++i) {
+//                for (auto j = 0; j < k; ++j) {
+//                    if (output->template data<float>()[i] > max[j]) {
+//                        for (auto _j = k - 1; _j > j; --_j) {
+//                            max[_j - 1] = max[_j];
+//                            max_index[_j - 1] = max_index[_j];
+//                        }
+//                        max[j] = output->template data<float>()[i];
+//                        max_index[j] = i;
+//                        goto skip;
+//                    }
+//                }
+//                skip:;
+//            }
+//        }
+//    }
+//    std::ostringstream stringStream;
+//    stringStream << avg_fps << " FPS\n";
+//
+//    for (auto j = 0; j < k; ++j) {
+//        stringStream << j << ": " << imagenet_classes[max_index[j]] << " - " << max[j] / 10 << "%\n";
+//    }
+//    return env->NewStringUTF(stringStream.str().c_str());
 }
