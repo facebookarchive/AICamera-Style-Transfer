@@ -1,69 +1,173 @@
+// Standard includes
 #include <jni.h>
 #include <string>
 #include <algorithm>
+#include <array>
+
+// Caffe2 includes
 #define PROTOBUF_USE_DLLS 1
 #define CAFFE2_USE_LITE_PROTO 1
+
 #include <caffe2/core/predictor.h>
 #include <caffe2/core/operator.h>
 #include <caffe2/core/timer.h>
+#include <caffe2/core/init.h>
 
-#include "caffe2/core/init.h"
-
+// Android includes
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
 #include <android/log.h>
-#include "classes.h"
-#define IMG_H 227
-#define IMG_W 227
-#define IMG_C 3
-#define MAX_DATA_SIZE IMG_H * IMG_W * IMG_C
-#define alog(...) __android_log_print(ANDROID_LOG_ERROR, "styletransfer", __VA_ARGS__);
 
-static caffe2::NetDef _initNet, _predictNet;
-static caffe2::Predictor *_predictor;
-static char raw_data[MAX_DATA_SIZE];
-static float input_data[MAX_DATA_SIZE];
-static caffe2::Workspace ws;
+#define ANDROID_LOG(level, ...) __android_log_print(ANDROID_LOG_##level, "styletransfer", __VA_ARGS__);
+
+struct NetworkDefinition {
+    std::string init_net;
+    std::string predict_net;
+};
+
+const std::array<NetworkDefinition, 1> network_definitions = {
+        {"mondrian_init.pb", "mondrian_predict.pb"}
+};
+
+
+// vector<Predictor>
+
+namespace {
+
+caffe2::NetDef _initNet, _predictNet;
+caffe2::Predictor *_predictor;
+caffe2::Workspace ws;
+float avg_fps = 0.0;
+float total_fps = 0.0;
+int iters_fps = 10;
+
+std::vector<float>
+YUVtoRGBImage(const jbyte *Y, const jbyte *U, const jbyte *V, int height, int width, int rowStride,
+           int pixelStride) {
+
+    std::vector<float> image(height * width * 3);
+
+    for (auto i = 0; i < height; ++i) {
+        const jbyte *Y_row = &Y[i * width];
+        const jbyte *U_row = &U[i / 4 * rowStride];
+        const jbyte *V_row = &V[i / 4 * rowStride];
+        for (auto j = 0; j < width; ++j) {
+            // Tested on Pixel and S7.
+            char y = Y_row[j];
+            char u = U_row[pixelStride * (j / pixelStride)];
+            char v = V_row[pixelStride * (j / pixelStride)];
+
+            float b_mean = 104.00698793f;
+            float g_mean = 116.66876762f;
+            float r_mean = 122.67891434f;
+
+            auto b_i = 0 * height * width + j * width + i;
+            auto g_i = 1 * height * width + j * width + i;
+            auto r_i = 2 * height * width + j * width + i;
+
+/*
+  R = Y + 1.402 (V-128)
+  G = Y - 0.34414 (U-128) - 0.71414 (V-128)
+  B = Y + 1.772 (U-V)
+ */
+            image[r_i] = -r_mean + (float) ((float) std::min<float>(255., std::max<float>(0.,
+                                                                                          (float) (
+                                                                                                  y +
+                                                                                                  1.402 *
+                                                                                                  (v -
+                                                                                                   128)))));
+            image[g_i] = -g_mean + (float) ((float) std::min<float>(255., std::max<float>(0.,
+                                                                                          (float) (
+                                                                                                  y -
+                                                                                                  0.34414 *
+                                                                                                  (u -
+                                                                                                   128) -
+                                                                                                  0.71414 *
+                                                                                                  (v -
+                                                                                                   128)))));
+            image[b_i] = -b_mean + (float) ((float) std::min<float>(255., std::max<float>(0.,
+                                                                                          (float) (
+                                                                                                  y +
+                                                                                                  1.772 *
+                                                                                                  (u -
+                                                                                                   v)))));
+
+        }
+    }
+
+    return image;
+}
+
+jbyte* RGBtoYUVImage(const caffe2::TensorCPU& image_tensor) {
+    jbyte* image_buffer = nullptr;
+    return image_buffer;
+}
+
 
 // A function to load the NetDefs from protobufs.
-void loadToNetDef(AAssetManager* mgr, caffe2::NetDef* net, const char *filename) {
-    AAsset* asset = AAssetManager_open(mgr, filename, AASSET_MODE_BUFFER);
+void loadToNetDef(AAssetManager *mgr, caffe2::NetDef *net, const char *filename) {
+    AAsset *asset = AAssetManager_open(mgr, filename, AASSET_MODE_BUFFER);
     assert(asset != nullptr);
     const void *data = AAsset_getBuffer(asset);
     assert(data != nullptr);
     off_t len = AAsset_getLength(asset);
     assert(len != 0);
     if (!net->ParseFromArray(data, len)) {
-        alog("Couldn't parse net from data.\n");
+        ANDROID_LOG(ERROR, "Couldn't parse net from data.\n");
     }
     AAsset_close(asset);
 }
 
+
+caffe2::TensorCPU transformImage(caffe2::TensorCPU& image_tensor) {
+    caffe2::Predictor::TensorVector input_vec{&image_tensor};
+    caffe2::Predictor::TensorVector output_vec;
+
+    caffe2::Timer t;
+    t.Start();
+    _predictor->run(input_vec, &output_vec);
+    float fps = 1000 / t.MilliSeconds();
+    total_fps += fps;
+    avg_fps = total_fps / iters_fps;
+    total_fps -= avg_fps;
+
+    if (output_vec.size() == 0) {
+        ANDROID_LOG(ERROR, "== 0");
+    } else if (output_vec.size() == 1) {
+        ANDROID_LOG(ERROR, "== 1");
+    } else {
+        ANDROID_LOG(ERROR, "> 1");
+    }
+
+    return image_tensor;
+}
+
+} // namespace
+
 extern "C"
 void
 Java_facebook_styletransfer_StyleTransfer_initCaffe2(
-        JNIEnv* env,
+        JNIEnv *env,
         jobject /* this */,
         jobject assetManager) {
     AAssetManager *mgr = AAssetManager_fromJava(env, assetManager);
-    alog("Attempting to load protobuf netdefs...");
-    loadToNetDef(mgr, &_initNet,   "squeeze_init_net.pb");
-    loadToNetDef(mgr, &_predictNet,"squeeze_predict_net.pb");
-    alog("done.");
-    alog("Instantiating predictor...");
+    ANDROID_LOG(INFO, "Attempting to load protobuf NetDefs...");
+    loadToNetDef(mgr, &_initNet, "squeeze_init_net.pb");
+    loadToNetDef(mgr, &_predictNet, "squeeze_predict_net.pb");
+    ANDROID_LOG(INFO, "NetDefs loaded!");
+    ANDROID_LOG(INFO, "Instantiating predictor...");
     _predictor = new caffe2::Predictor(_initNet, _predictNet);
-    alog("done.")
+    assert(_predictor);
+    ANDROID_LOG(INFO, "Predictor insantiated!");
+
 }
 
-float avg_fps = 0.0;
-float total_fps = 0.0;
-int iters_fps = 10;
-
 extern "C"
-JNIEXPORT jbyteArray JNICALL
+JNIEXPORT jintArray JNICALL
 Java_facebook_styletransfer_StyleTransfer_transformImageWithCaffe2(
         JNIEnv *env,
         jobject /* this */,
+        jint styleIndex,
         jint height,
         jint width,
         jbyteArray Y,
@@ -72,124 +176,33 @@ Java_facebook_styletransfer_StyleTransfer_transformImageWithCaffe2(
         jint rowStride,
         jint pixelStride) {
 
-    const int totalLength = height * width * 3;
-    jbyteArray output = env->NewByteArray(totalLength);
-
-    for (int i = 0, j = 0; i < totalLength; i += 3, j += 1) {
-        output[i] = Y[j];
-        output[i + 1] = U[j];
-        output[i + 2] = V[j];
+    if (!_predictor) {
+        ANDROID_LOG(ERROR, "Predictor was null");
+        return nullptr;
     }
 
-    return output;
+    const jbyte *Y_data = env->GetByteArrayElements(Y, 0);
+    const jbyte *U_data = env->GetByteArrayElements(U, 0);
+    const jbyte *V_data = env->GetByteArrayElements(V, 0);
 
-//    if (!_predictor) {
-//        return env->NewStringUTF("Loading...");
-//    }
-//    jsize Y_len = env->GetArrayLength(Y);
-//    jbyte * Y_data = env->GetByteArrayElements(Y, 0);
-//    assert(Y_len <= MAX_DATA_SIZE);
-//    jsize U_len = env->GetArrayLength(U);
-//    jbyte * U_data = env->GetByteArrayElements(U, 0);
-//    assert(U_len <= MAX_DATA_SIZE);
-//    jsize V_len = env->GetArrayLength(V);
-//    jbyte * V_data = env->GetByteArrayElements(V, 0);
-//    assert(V_len <= MAX_DATA_SIZE);
+    const auto image = YUVtoRGBImage(Y_data, U_data, V_data, height, width, rowStride, pixelStride);
+    assert(image.size() == width * height * 3);
+
+//    caffe2::TensorCPU image_tensor;
+//    image_tensor.Resize(std::vector<int>({1, IMG_C, height, width}));
+//    memcpy(image_tensor.mutable_data<float>(), image.data(), height * width * IMG_C * sizeof(float));
 //
-//#define min(a,b) ((a) > (b)) ? (b) : (a)
-//#define max(a,b) ((a) > (b)) ? (a) : (b)
 //
-//    auto h_offset = max(0, (h - IMG_H) / 2);
-//    auto w_offset = max(0, (w - IMG_W) / 2);
-//
-//    auto iter_h = IMG_H;
-//    auto iter_w = IMG_W;
-//    if (h < IMG_H) {
-//        iter_h = h;
-//    }
-//    if (w < IMG_W) {
-//        iter_w = w;
-//    }
-//
-//    for (auto i = 0; i < iter_h; ++i) {
-//        jbyte* Y_row = &Y_data[(h_offset + i) * w];
-//        jbyte* U_row = &U_data[(h_offset + i) / 4 * rowStride];
-//        jbyte* V_row = &V_data[(h_offset + i) / 4 * rowStride];
-//        for (auto j = 0; j < iter_w; ++j) {
-//            // Tested on Pixel and S7.
-//            char y = Y_row[w_offset + j];
-//            char u = U_row[pixelStride * ((w_offset+j)/pixelStride)];
-//            char v = V_row[pixelStride * ((w_offset+j)/pixelStride)];
-//
-//            float b_mean = 104.00698793f;
-//            float g_mean = 116.66876762f;
-//            float r_mean = 122.67891434f;
-//
-//            auto b_i = 0 * IMG_H * IMG_W + j * IMG_W + i;
-//            auto g_i = 1 * IMG_H * IMG_W + j * IMG_W + i;
-//            auto r_i = 2 * IMG_H * IMG_W + j * IMG_W + i;
-//
-//            if (infer_HWC) {
-//                b_i = (j * IMG_W + i) * IMG_C;
-//                g_i = (j * IMG_W + i) * IMG_C + 1;
-//                r_i = (j * IMG_W + i) * IMG_C + 2;
-//            }
-///*
-//  R = Y + 1.402 (V-128)
-//  G = Y - 0.34414 (U-128) - 0.71414 (V-128)
-//  B = Y + 1.772 (U-V)
-// */
-//            input_data[r_i] = -r_mean + (float) ((float) min(255., max(0., (float) (y + 1.402 * (v - 128)))));
-//            input_data[g_i] = -g_mean + (float) ((float) min(255., max(0., (float) (y - 0.34414 * (u - 128) - 0.71414 * (v - 128)))));
-//            input_data[b_i] = -b_mean + (float) ((float) min(255., max(0., (float) (y + 1.772 * (u - v)))));
-//
-//        }
-//    }
-//
-//    caffe2::TensorCPU input;
-//    if (infer_HWC) {
-//        input.Resize(std::vector<int>({IMG_H, IMG_W, IMG_C}));
-//    } else {
-//        input.Resize(std::vector<int>({1, IMG_C, IMG_H, IMG_W}));
-//    }
-//    memcpy(input.mutable_data<float>(), input_data, IMG_H * IMG_W * IMG_C * sizeof(float));
-//    caffe2::Predictor::TensorVector input_vec{&input};
-//    caffe2::Predictor::TensorVector output_vec;
-//    caffe2::Timer t;
-//    t.Start();
-//    _predictor->run(input_vec, &output_vec);
-//    float fps = 1000/t.MilliSeconds();
-//    total_fps += fps;
-//    avg_fps = total_fps / iters_fps;
-//    total_fps -= avg_fps;
-//
-//    constexpr int k = 5;
-//    float max[k] = {0};
-//    int max_index[k] = {0};
-//    // Find the top-k results manually.
-//    if (output_vec.capacity() > 0) {
-//        for (auto output : output_vec) {
-//            for (auto i = 0; i < output->size(); ++i) {
-//                for (auto j = 0; j < k; ++j) {
-//                    if (output->template data<float>()[i] > max[j]) {
-//                        for (auto _j = k - 1; _j > j; --_j) {
-//                            max[_j - 1] = max[_j];
-//                            max_index[_j - 1] = max_index[_j];
-//                        }
-//                        max[j] = output->template data<float>()[i];
-//                        max_index[j] = i;
-//                        goto skip;
-//                    }
-//                }
-//                skip:;
-//            }
-//        }
-//    }
-//    std::ostringstream stringStream;
-//    stringStream << avg_fps << " FPS\n";
-//
-//    for (auto j = 0; j < k; ++j) {
-//        stringStream << j << ": " << imagenet_classes[max_index[j]] << " - " << max[j] / 10 << "%\n";
-//    }
-//    return env->NewStringUTF(stringStream.str().c_str());
+//    const caffe2::TensorCPU output_tensor = transformImage(image_tensor);
+//    const jbyte* output_buffer = RGBtoYUVImage(image_tensor);
+
+
+
+    std::vector<int> output_buffer(image.size());
+    std::copy(image.begin(), image.end(), output_buffer.begin());
+
+    jintArray output_array = env->NewIntArray(output_buffer.size());
+    env->SetIntArrayRegion(output_array, 0, output_buffer.size(), output_buffer.data());
+
+    return output_array;
 }

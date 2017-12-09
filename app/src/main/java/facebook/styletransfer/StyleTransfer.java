@@ -5,8 +5,12 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
+import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
+import android.graphics.YuvImage;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -41,6 +45,7 @@ import android.widget.ViewSwitcher;
 
 import org.w3c.dom.Text;
 
+import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -169,7 +174,8 @@ public class StyleTransfer extends Activity {
         System.loadLibrary("native-lib");
     }
 
-    public native byte[] transformImageWithCaffe2(
+    public native int[] transformImageWithCaffe2(
+            int mStyleIndex,
             int height,
             int width,
             byte[] Y,
@@ -194,13 +200,45 @@ public class StyleTransfer extends Activity {
 
     private class OnImageAvailableCallback implements ImageReader.OnImageAvailableListener {
 
+        private byte[] getChannel(Image image, int index) {
+            final ByteBuffer buffer = image.getPlanes()[index].getBuffer();
+            final byte[] array = new byte[buffer.capacity()];
+            buffer.get(array);
+            return array;
+        }
+
+        private void displayImage(int[] buffer, int height, int width) {
+
+            final Bitmap bitmap = Bitmap.createBitmap(buffer, width, height, Bitmap.Config.RGB_565);
+
+//            Bitmap.createBitmap(pix, picw, pich, Bitmap.Config.ARGB_8888)
+
+
+//            final YuvImage image = new YuvImage(
+//                    YUVBuffer,
+//                    ImageFormat.YUV_420_888,
+//                    height,
+//                    width,
+//                    null
+//            );
+//
+//            final ByteArrayOutputStream stream = new ByteArrayOutputStream();
+//            image.compressToJpeg(new Rect(0, 0, width, height), 50, stream);
+//            final byte[] imageBytes = stream.toByteArray();
+//            final Bitmap bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
+
+            Log.d(TAG, "Displaying image");
+
+            mImageView.setImageBitmap(bitmap);
+        }
+
         private AtomicBoolean isProcessing = new AtomicBoolean(false);
 
         @Override
         public void onImageAvailable(ImageReader reader) {
             Image image = null;
             try {
-                image = reader.acquireLatestImage();
+                image = reader.acquireNextImage();
 
                 if (isProcessing.get() || mStyleIndex == 0) {
                     image.close();
@@ -211,22 +249,20 @@ public class StyleTransfer extends Activity {
 
                 Log.d(TAG, "style indeX: " + mStyleIndex);
 
-                final ByteBuffer Ybuffer = image.getPlanes()[0].getBuffer();
-                final ByteBuffer Ubuffer = image.getPlanes()[1].getBuffer();
-                final ByteBuffer Vbuffer = image.getPlanes()[2].getBuffer();
-                final byte[] Y = new byte[Ybuffer.capacity()];
-                final byte[] U = new byte[Ubuffer.capacity()];
-                final byte[] V = new byte[Vbuffer.capacity()];
-                Ybuffer.get(Y);
-                Ubuffer.get(U);
-                Vbuffer.get(V);
+                final byte[] Y = getChannel(image, 0);
+                final byte[] U = getChannel(image, 1);
+                final byte[] V = getChannel(image, 2);
 
                 final int rowStride = image.getPlanes()[1].getRowStride();
                 final int pixelStride = image.getPlanes()[1].getPixelStride();
 
-                final byte[] transformedImage = transformImageWithCaffe2(
-                        image.getHeight(),
-                        image.getWidth(),
+                final int height = image.getHeight();
+                final int width = image.getWidth();
+
+                final int[] transformedImage = transformImageWithCaffe2(
+                        mStyleIndex,
+                        height,
+                        width,
                         Y,
                         U,
                         V,
@@ -236,7 +272,9 @@ public class StyleTransfer extends Activity {
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        Log.d(TAG, "Done processing: " + transformedImage.length + " " + Y.length);
+                        if (transformedImage != null) {
+                            displayImage(transformedImage, height, width);
+                        }
                         isProcessing.set(false);
                     }
                 });
@@ -317,7 +355,7 @@ public class StyleTransfer extends Activity {
                     mPreviewSize.getWidth(),
                     mPreviewSize.getHeight(),
                     ImageFormat.YUV_420_888,
-                    1
+                    4
             );
 
             final OnImageAvailableCallback onImageAvailable = new OnImageAvailableCallback();
