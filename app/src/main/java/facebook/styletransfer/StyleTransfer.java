@@ -21,7 +21,6 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
-import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
@@ -29,24 +28,17 @@ import android.os.HandlerThread;
 import android.support.annotation.NonNull;
 import android.util.Log;
 import android.util.Size;
-import android.view.DragEvent;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.Window;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ViewSwitcher;
 
-import org.w3c.dom.Text;
-
 import java.io.ByteArrayOutputStream;
-import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
@@ -200,88 +192,113 @@ public class StyleTransfer extends Activity {
 
     private class OnImageAvailableCallback implements ImageReader.OnImageAvailableListener {
 
-        private byte[] getChannel(Image image, int index) {
+        private int copyChannel(Image image, int index, byte[] array, int offset) {
             final ByteBuffer buffer = image.getPlanes()[index].getBuffer();
-            final byte[] array = new byte[buffer.capacity()];
-            buffer.get(array);
+            final int length = buffer.capacity();
+            buffer.get(array, offset, length);
+            return length;
+        }
+
+        private void displayImage(int[] pixels, int width, int height) {
+            if (mTransformedImage == null) {
+                mTransformedImage = Bitmap.createBitmap(
+                        pixels,
+                        width,
+                        height,
+                        Bitmap.Config.ARGB_8888
+                );
+                mImageView.setImageBitmap(mTransformedImage);
+            } else {
+                mTransformedImage.setPixels(pixels, 0, width, 0, 0, width, height);
+            }
+        }
+
+        private byte[] collectPixels(Image image) {
+            final byte[] array = new byte[image.getWidth() * image.getHeight() * 2];
+            int offset = 0;
+            offset += copyChannel(mImage, 0, array, offset);
+            offset += copyChannel(mImage, 1, array, offset);
+            copyChannel(mImage, 2, array, offset);
             return array;
         }
 
-        private void displayImage(int[] buffer, int height, int width) {
+        private Bitmap getScaledBitmap(byte[] array, int width, int height) {
+            final YuvImage yuv = new YuvImage(array, ImageFormat.NV21, width, height, null);
+            final ByteArrayOutputStream jpegStream = new ByteArrayOutputStream();
+            yuv.compressToJpeg(new Rect(0, 0, width, height), 100, jpegStream);
+            final byte[] jpeg = jpegStream.toByteArray();
 
-            final Bitmap bitmap = Bitmap.createBitmap(buffer, width, height, Bitmap.Config.RGB_565);
+            final BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inDensity = 16;
+            options.inTargetDensity = 1;
+            options.inScaled = true;
 
-//            Bitmap.createBitmap(pix, picw, pich, Bitmap.Config.ARGB_8888)
-
-
-//            final YuvImage image = new YuvImage(
-//                    YUVBuffer,
-//                    ImageFormat.YUV_420_888,
-//                    height,
-//                    width,
-//                    null
-//            );
-//
-//            final ByteArrayOutputStream stream = new ByteArrayOutputStream();
-//            image.compressToJpeg(new Rect(0, 0, width, height), 50, stream);
-//            final byte[] imageBytes = stream.toByteArray();
-//            final Bitmap bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
-
-            Log.d(TAG, "Displaying image");
-
-            mImageView.setImageBitmap(bitmap);
+            return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, options);
         }
-
-        private AtomicBoolean isProcessing = new AtomicBoolean(false);
 
         @Override
         public void onImageAvailable(ImageReader reader) {
-            Image image = null;
+            mImage = null;
             try {
-                image = reader.acquireNextImage();
+                mImage = reader.acquireLatestImage();
+                Log.d(TAG, "Image!!!!!!!!!!!!!!!!!!!!!!!!");
 
-                if (isProcessing.get() || mStyleIndex == 0) {
-                    image.close();
+                Log.d(TAG, "style index: " + mStyleIndex);
+
+                if (mImage == null) {
+                    Log.d(TAG, "Acquired image was null");
+                    return;
+                }
+                if (mCurrentlyProcessing.get() || mStyleIndex == 0) {
+                    Log.d(TAG, "early stop");
+                    mImage.close();
                     return;
                 }
 
-                isProcessing.set(true);
+                mCurrentlyProcessing.set(true);
 
-                Log.d(TAG, "style indeX: " + mStyleIndex);
+                final byte[] array = collectPixels(mImage);
+                final Bitmap scaled = getScaledBitmap(array, mImage.getWidth(), mImage.getHeight());
 
-                final byte[] Y = getChannel(image, 0);
-                final byte[] U = getChannel(image, 1);
-                final byte[] V = getChannel(image, 2);
+//                final int height = scaled.getHeight();
+//                final int width = scaled.getWidth();
+//
+//                final int[] pixels = new int[width * height];
+//                scaled.getPixels(pixels, 0, width, 0, 0, width, height);
+//
+//                scaled.recycle();
 
-                final int rowStride = image.getPlanes()[1].getRowStride();
-                final int pixelStride = image.getPlanes()[1].getPixelStride();
-
-                final int height = image.getHeight();
-                final int width = image.getWidth();
-
-                final int[] transformedImage = transformImageWithCaffe2(
-                        mStyleIndex,
-                        height,
-                        width,
-                        Y,
-                        U,
-                        V,
-                        rowStride,
-                        pixelStride);
+//                final int rowStride = mImage.getPlanes()[1].getRowStride();
+//                final int pixelStride = mImage.getPlanes()[1].getPixelStride();
+//
+//                Log.d(TAG, "Calling transformImageWithCaffe2");
+//                mTransformedImage = transformImageWithCaffe2(
+//                        mStyleIndex,
+//                        height,
+//                        width,
+//                        Y,
+//                        U,
+//                        V,
+//                        rowStride,
+//                        pixelStride);
 
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        if (transformedImage != null) {
-                            displayImage(transformedImage, height, width);
-                        }
-                        isProcessing.set(false);
+//                        if (mTransformedImage != null) {
+//                            Log.d(TAG, "size: " + mTransformedImage.length * 4);
+//                            displayImage(pixels, height, width);
+//                        mImageView.setImageBitmap(scaled);
+                        Log.d(TAG, "^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
+//                        }
+                        mCurrentlyProcessing.set(false);
                     }
                 });
 
             } finally {
-                if (image != null) {
-                    image.close();
+                if (mImage != null) {
+                    Log.d(TAG, "Closing############");
+                    mImage.close();
                 }
             }
         }
@@ -304,8 +321,13 @@ public class StyleTransfer extends Activity {
     private GestureDetector mGestureDetector;
     private ViewSwitcher mViewSwitcher;
     private AssetManager mAssetManager;
+    private Image mImage = null;
+    private Bitmap mTransformedImage;
+    private ImageReader mImageReader;
+    private final AtomicBoolean mCurrentlyProcessing = new AtomicBoolean(false);
     private final TextureViewListener mTextureViewListener = new TextureViewListener();
     private final CameraStateCallback cameraStateCallback = new CameraStateCallback();
+    private final OnImageAvailableCallback mOnImageAvailable = new OnImageAvailableCallback();
 
 
     @Override
@@ -347,25 +369,23 @@ public class StyleTransfer extends Activity {
     protected void createCameraPreview() {
         try {
             final SurfaceTexture texture = mTextureView.getSurfaceTexture();
-            assert texture != null;
             texture.setDefaultBufferSize(mPreviewSize.getWidth(), mPreviewSize.getHeight());
             final Surface surface = new Surface(texture);
 
-            ImageReader imageReader = ImageReader.newInstance(
+            mImageReader = ImageReader.newInstance(
                     mPreviewSize.getWidth(),
                     mPreviewSize.getHeight(),
                     ImageFormat.YUV_420_888,
                     4
             );
 
-            final OnImageAvailableCallback onImageAvailable = new OnImageAvailableCallback();
-            imageReader.setOnImageAvailableListener(onImageAvailable, mBackgroundHandler);
+            mImageReader.setOnImageAvailableListener(mOnImageAvailable, mBackgroundHandler);
 
             mCaptureRequestBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
             mCaptureRequestBuilder.addTarget(surface);
-            mCaptureRequestBuilder.addTarget(imageReader.getSurface());
+            mCaptureRequestBuilder.addTarget(mImageReader.getSurface());
 
-            final List<Surface> surfaces = Arrays.asList(surface, imageReader.getSurface());
+            final List<Surface> surfaces = Arrays.asList(surface, mImageReader.getSurface());
             CameraCaptureSessionStateCallback callback = new CameraCaptureSessionStateCallback();
             mCameraDevice.createCaptureSession(surfaces, callback, null);
 
@@ -680,10 +700,6 @@ public class StyleTransfer extends Activity {
 //        CameraManager manager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
 //        try {
 //            cameraId = manager.getCameraIdList()[0];
-//            CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
-//            StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-//            assert map != null;
-//            imageDimension = map.getOutputSizes(SurfaceTexture.class)[0];
 //            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
 //                ActivityCompat.requestPermissions(facebook.styletransfer.StyleTransfer.this, new String[]{Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_CAMERA_PERMISSION);
 //                return;

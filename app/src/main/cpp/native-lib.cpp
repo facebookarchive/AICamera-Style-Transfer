@@ -185,8 +185,8 @@ Java_facebook_styletransfer_StyleTransfer_transformImageWithCaffe2(
     const jbyte *U_data = env->GetByteArrayElements(U, 0);
     const jbyte *V_data = env->GetByteArrayElements(V, 0);
 
-    const auto image = YUVtoRGBImage(Y_data, U_data, V_data, height, width, rowStride, pixelStride);
-    assert(image.size() == width * height * 3);
+//    const auto image = YUVtoRGBImage(Y_data, U_data, V_data, height, width, rowStride, pixelStride);
+//    assert(image.size() == width * height * 3);
 
 //    caffe2::TensorCPU image_tensor;
 //    image_tensor.Resize(std::vector<int>({1, IMG_C, height, width}));
@@ -197,12 +197,14 @@ Java_facebook_styletransfer_StyleTransfer_transformImageWithCaffe2(
 //    const jbyte* output_buffer = RGBtoYUVImage(image_tensor);
 
 
+//    std::vector<int> output_buffer(image.size());
+//    std::copy(image.begin(), image.end(), output_buffer.begin());
 
-    std::vector<int> output_buffer(image.size());
-    std::copy(image.begin(), image.end(), output_buffer.begin());
-
-    jintArray output_array = env->NewIntArray(output_buffer.size());
-    env->SetIntArrayRegion(output_array, 0, output_buffer.size(), output_buffer.data());
-
-    return output_array;
+    return nullptr;
+//    jintArray output_array = env->NewIntArray(output_buffer.size());
+//    if (output_array != nullptr) {
+//        env->SetIntArrayRegion(output_array, 0, output_buffer.size(), output_buffer.data());
+//    }
+//
+//    return output_array;
 }

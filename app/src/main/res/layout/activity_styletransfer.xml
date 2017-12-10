@@ -9,8 +9,10 @@
 
     <ViewSwitcher
         android:id="@+id/view_switcher"
-        android:layout_width="match_parent"
-        android:layout_height="659dp">
+        android:layout_width="585dp"
+        android:layout_height="659dp"
+        tools:layout_editor_absoluteY="0dp"
+        tools:layout_editor_absoluteX="8dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -38,13 +40,15 @@
                 android:id="@+id/imageView"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
+                android:adjustViewBounds="true"
+                android:scaleType="fitCenter"
                 app:srcCompat="@mipmap/cat" />
         </LinearLayout>
     </ViewSwitcher>
 
     <TextView
         android:id="@+id/textView"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="50dp"
         android:background="#88000000"
         android:gravity="center"
@@ -56,6 +60,5 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
-        android:layout_marginBottom="8dp"
-        tools:layout_editor_absoluteX="8dp" />
+        android:layout_marginBottom="8dp" />
 </android.support.constraint.ConstraintLayout>
