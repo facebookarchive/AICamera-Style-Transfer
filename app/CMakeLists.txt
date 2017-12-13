@@ -66,6 +66,28 @@ set_target_properties(
     ${CMAKE_CURRENT_LIST_DIR}/src/main/jniLibs/${ANDROID_ABI}/libnnpack.a
     )
 
+add_library(
+    yuv_internal
+    STATIC
+    IMPORTED
+    )
+set_target_properties(
+    yuv_internal
+    PROPERTIES IMPORTED_LOCATION
+    ${CMAKE_CURRENT_LIST_DIR}/src/main/jniLibs/${ANDROID_ABI}/libyuv_internal.a
+    )
+
+add_library(
+    yuv_neon
+    STATIC
+    IMPORTED
+    )
+set_target_properties(
+    yuv_neon
+    PROPERTIES IMPORTED_LOCATION
+    ${CMAKE_CURRENT_LIST_DIR}/src/main/jniLibs/${ANDROID_ABI}/libyuv_neon.a
+    )
+
 include_directories( src/main/cpp )
 
 target_link_libraries(
@@ -78,6 +100,8 @@ target_link_libraries(
                        glog
                        protobuf
                        cpufeatures
+                       yuv_internal
+                       yuv_neon
                        ${log-lib}
                        ${android-lib}
                        EGL
