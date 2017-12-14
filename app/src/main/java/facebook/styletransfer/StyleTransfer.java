@@ -6,12 +6,9 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
 import android.graphics.Matrix;
-import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
-import android.graphics.YuvImage;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -36,10 +33,10 @@ import android.view.TextureView;
 import android.view.View;
 import android.view.Window;
 import android.widget.ImageView;
+import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ViewSwitcher;
 
-import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
@@ -149,7 +146,7 @@ public class StyleTransfer extends Activity {
                 }
                 Log.d(TAG, "Swipe right: " + mStyleIndex);
             } else if (velocityX < 0) {
-                if (mStyleIndex < NUMBER_OF_STYLES - 1) {
+                if (mStyleIndex < STYLES.length - 1) {
                     if (mStyleIndex == 0) {
                         mViewSwitcher.showNext();
                     }
@@ -158,6 +155,9 @@ public class StyleTransfer extends Activity {
 
                 Log.d(TAG, "Swipe left: " + mStyleIndex);
             }
+
+            mTextView.setText(STYLES[mStyleIndex]);
+
             return true;
         }
 
@@ -208,12 +208,18 @@ public class StyleTransfer extends Activity {
                     Bitmap.Config.ARGB_8888
             );
 
-            Matrix m = new Matrix();
-            m.setRotate(90);
-            Bitmap dst = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), m, false);
+            final Matrix transform = new Matrix();
+            transform.setRotate(90);
+            Bitmap rotated = Bitmap.createBitmap(
+                    bitmap,
+                    0,
+                    0,
+                    bitmap.getWidth(),
+                    bitmap.getHeight(),
+                    transform,
+                    false);
 
-            Log.d(TAG, "Displaying image!");
-            mImageView.setImageBitmap(dst);
+            mImageView.setImageBitmap(rotated);
         }
 
         @Override
@@ -221,9 +227,6 @@ public class StyleTransfer extends Activity {
             mImage = null;
             try {
                 mImage = reader.acquireLatestImage();
-                Log.d(TAG, "Image!!!!!!!!!!!!!!!!!!!!!!!!");
-
-                Log.d(TAG, "style index: " + mStyleIndex);
 
                 if (mImage == null) {
                     Log.d(TAG, "Acquired image was null");
@@ -241,19 +244,14 @@ public class StyleTransfer extends Activity {
                 final byte[] U = getChannel(mImage, 1);
                 final byte[] V = getChannel(mImage, 2);
 
-                Log.d(TAG, Y.length + " " + U.length + " " + V.length);
-
                 final int UVRowStride = mImage.getPlanes()[1].getRowStride();
                 final int UVPixelStride = mImage.getPlanes()[1].getPixelStride();
 
                 final int height = mImage.getHeight();
                 final int width = mImage.getWidth();
 
-                Log.d(TAG, "stride: " + mImage.getPlanes()[0].getRowStride() + " " + mImage.getPlanes()[1].getRowStride() + " " + mImage.getPlanes()[2].getRowStride());
-
-                Log.d(TAG, "Calling transformImageWithCaffe2 " + mImage.getHeight() + " " + mImage.getWidth() + " " + UVRowStride + " " + UVPixelStride);
                 mTransformedImage = transformImageWithCaffe2(
-                        mStyleIndex,
+                        mStyleIndex - 1,
                         height,
                         width,
                         Y,
@@ -268,8 +266,6 @@ public class StyleTransfer extends Activity {
                         if (mTransformedImage != null) {
                             displayImage(mTransformedImage, height, width);
                             mTransformedImage = null;
-                        } else {
-                            Log.d(TAG, "Was null!");
                         }
                         mCurrentlyProcessing.set(false);
                     }
@@ -285,11 +281,22 @@ public class StyleTransfer extends Activity {
 
     private static final String TAG = "StyleTransfer";
     private static final int REQUEST_CAMERA_PERMISSION = 200;
-    private static final int NUMBER_OF_STYLES = 3;
-
     private CameraDevice mCameraDevice;
+    private static final String[] STYLES = {
+            "Preview",
+            "Animals",
+            "Composition",
+            "Crayon",
+            "Flowers",
+            "Lines",
+            "Mosaic",
+            "Night",
+            "Page",
+            "Watercolor",
+            "Whale",
+    };
+
     private CameraCaptureSession mCameraCaptureSession;
-    private String mCameraId;
     private Size mPreviewSize;
     private TextureView mTextureView;
     private ImageView mImageView;
@@ -303,6 +310,7 @@ public class StyleTransfer extends Activity {
     private Image mImage = null;
     private int[] mTransformedImage;
     private ImageReader mImageReader;
+    private TextView mTextView;
     private final AtomicBoolean mCurrentlyProcessing = new AtomicBoolean(false);
     private final TextureViewListener mTextureViewListener = new TextureViewListener();
     private final CameraStateCallback cameraStateCallback = new CameraStateCallback();
@@ -322,9 +330,8 @@ public class StyleTransfer extends Activity {
         setContentView(R.layout.activity_styletransfer);
 
         mViewSwitcher = (ViewSwitcher)findViewById(R.id.view_switcher);
-
+        mTextView = (TextView)findViewById(R.id.textView);
         mImageView = (ImageView) findViewById(R.id.imageView);
-        mImageView.setImageResource(R.mipmap.cat);
 
         mTextureView = (TextureView) findViewById(R.id.textureView);
         mTextureView.setSystemUiVisibility(SYSTEM_UI_FLAG_IMMERSIVE);
@@ -377,7 +384,7 @@ public class StyleTransfer extends Activity {
     private void openCamera() {
         final CameraManager cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
         try {
-            mCameraId = cameraManager.getCameraIdList()[0];
+            final String mCameraId = cameraManager.getCameraIdList()[0];
             final CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(mCameraId);
             final StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
 
@@ -385,7 +392,7 @@ public class StyleTransfer extends Activity {
             mPreviewSize = previewSizes[0];
             for (Size size : previewSizes) {
                 if (size.getWidth() < 1000 && size.getHeight() < 1000) {
-                    Log.d(TAG, size.toString());
+                    Log.d(TAG, "Using preview size: " + size.toString());
                     mPreviewSize = size;
                     break;
                 }

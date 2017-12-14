@@ -7,28 +7,10 @@
     android:theme="@android:style/Theme.Holo.NoActionBar"
     tools:context="facebook.styletransfer.StyleTransfer">
 
-    <TextView
-        android:id="@+id/textView"
-        android:layout_width="0dp"
-        android:layout_height="50dp"
-        android:background="#88000000"
-        android:gravity="center"
-        android:text="Preview"
-        android:textColor="#CCffffff"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        android:textAllCaps="true"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintLeft_toLeftOf="parent"
-        app:layout_constraintRight_toRightOf="parent"
-        android:layout_marginBottom="8dp" />
-
     <ViewSwitcher
         android:id="@+id/view_switcher"
         android:layout_width="585dp"
-        android:layout_height="815dp"
-        tools:layout_editor_absoluteX="8dp"
-        tools:layout_editor_absoluteY="7dp">
+        android:layout_height="815dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -52,8 +34,24 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:adjustViewBounds="true"
-                android:scaleType="fitXY"
-                app:srcCompat="@mipmap/cat" />
+                android:scaleType="fitXY"/>
         </LinearLayout>
     </ViewSwitcher>
+
+    <TextView
+        android:id="@+id/textView"
+        android:layout_width="0dp"
+        android:layout_height="50dp"
+        android:layout_marginBottom="16dp"
+        android:background="#88000000"
+        android:gravity="center"
+        android:text="Preview"
+        android:textAllCaps="true"
+        android:textColor="#CCffffff"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="0.0"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"/>
 </android.support.constraint.ConstraintLayout>
