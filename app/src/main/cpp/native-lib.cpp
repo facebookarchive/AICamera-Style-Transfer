@@ -46,13 +46,12 @@ const std::array<std::string, 10> kStyleNames = {
 std::vector<std::pair<caffe2::NetDef, caffe2::NetDef>> net_defs;
 std::unique_ptr<caffe2::Predictor> predictor;
 int current_style_index = -1;
-//caffe2::GLPredictor* openGLPredictor;
 
-std::vector<int> packRGBAPixels(const caffe2::TensorCPU& tensor, int height, int width) {
+std::vector<int> packRGBAPixels(const caffe2::TensorCPU &tensor, int height, int width) {
     std::vector<int> packed;
     packed.reserve(width * height);
 
-    const uint8_t* data = tensor.data<uint8_t>();
+    const uint8_t *data = tensor.data<uint8_t>();
 
     for (int row = 0; row < height; ++row) {
         for (int column = 0; column < width; ++column) {
@@ -75,10 +74,9 @@ std::vector<int> packRGBAPixels(const caffe2::TensorCPU& tensor, int height, int
     return packed;
 }
 
-
-caffe2::NetDef loadNet(AAssetManager* asset_manager, const std::string& filename) {
-    AAsset* asset = AAssetManager_open(asset_manager, filename.c_str(), AASSET_MODE_BUFFER);
-    const void* data = AAsset_getBuffer(asset);
+caffe2::NetDef loadNet(AAssetManager *asset_manager, const std::string &filename) {
+    AAsset *asset = AAssetManager_open(asset_manager, filename.c_str(), AASSET_MODE_BUFFER);
+    const void *data = AAsset_getBuffer(asset);
     const off_t length = AAsset_getLength(asset);
 
     caffe2::NetDef net;
@@ -94,14 +92,14 @@ caffe2::NetDef loadNet(AAssetManager* asset_manager, const std::string& filename
 }
 
 
-caffe2::TensorCPU* transformImage(caffe2::Predictor& predictor, caffe2::TensorCPU& image_tensor) {
-    std::vector<caffe2::TensorCPU*> output;
+caffe2::TensorCPU *transformImage(caffe2::Predictor &predictor, caffe2::TensorCPU &image_tensor) {
+    std::vector<caffe2::TensorCPU *> output;
     predictor.run({&image_tensor}, &output);
     CAFFE_ENFORCE(!output.empty());
     return output.front();
 }
 
-jintArray toIntArray(JNIEnv *env, const std::vector<int>& output_buffer) {
+jintArray toIntArray(JNIEnv *env, const std::vector<int> &output_buffer) {
     jintArray output_array = env->NewIntArray(output_buffer.size());
     if (output_array != nullptr) {
         env->SetIntArrayRegion(output_array, 0, output_buffer.size(), output_buffer.data());
@@ -111,8 +109,8 @@ jintArray toIntArray(JNIEnv *env, const std::vector<int>& output_buffer) {
 }
 
 // A function to load the NetDefs from protobufs.
-void loadToNetDef(AAssetManager* mgr, caffe2::NetDef* net, const char *filename) {
-    AAsset* asset = AAssetManager_open(mgr, filename, AASSET_MODE_BUFFER);
+void loadToNetDef(AAssetManager *mgr, caffe2::NetDef *net, const char *filename) {
+    AAsset *asset = AAssetManager_open(mgr, filename, AASSET_MODE_BUFFER);
     assert(asset != nullptr);
     const void *data = AAsset_getBuffer(asset);
     assert(data != nullptr);
@@ -130,25 +128,32 @@ void
 Java_facebook_styletransfer_StyleTransfer_initCaffe2(
         JNIEnv *env,
         jobject /* this */,
-        jobject jAssetManager) {
-    AAssetManager* asset_manager = AAssetManager_fromJava(env, jAssetManager);
-
+        jobject jAssetManager) try {
+    AAssetManager *asset_manager = AAssetManager_fromJava(env, jAssetManager);
     ANDROID_LOG(INFO, "Loading protobuf NetDefs...");
-    for (const auto& name : kStyleNames) {
+    for (const auto &name : kStyleNames) {
         auto init_net = loadNet(asset_manager, name + "/init_net.pb");
         auto predict_net = loadNet(asset_manager, name + "/predict_net.pb");
 
 #ifdef USE_OPEN_GL
-        ANDROID_LOG(INFO, "Converting prediction network to OpenGL implementation...");
-        caffe2::NetDef gl_predict_net;
-        CAFFE_ENFORCE(caffe2::tryConvertToOpenGL(init_net, predict_net, &gl_predict_net, true, false, true));
-        predict_net = gl_predict_net;
+        try {
+            ANDROID_LOG(INFO, "Converting prediction network to OpenGL implementation...");
+            caffe2::NetDef gl_predict_net;
+            CAFFE_ENFORCE(
+                    caffe2::tryConvertToOpenGL(init_net, predict_net, &gl_predict_net));
+            predict_net = gl_predict_net;
+        } catch (std::exception &exception) {
+            ANDROID_LOG(ERROR, "OpenGL conversion failed with [%s], will be using CPU instead",
+                        exception.what());
+        }
 #endif
-
         net_defs.emplace_back(std::move(init_net), std::move(predict_net));
     }
 
-    ANDROID_LOG(INFO, "Initialization complete!");
+    ANDROID_LOG(INFO, "Initialization successful!");
+} catch (std::exception &exception) {
+    ANDROID_LOG(ERROR, "StyleTransfer initialization failed: %s", exception.what());
+    std::exit(EXIT_FAILURE);
 }
 
 extern "C"
@@ -163,13 +168,13 @@ Java_facebook_styletransfer_StyleTransfer_transformImageWithCaffe2(
         jbyteArray UArray,
         jbyteArray VArray,
         jint UVRowStride,
-        jint UVPixelStride) {
-
+        jint UVPixelStride) try {
     CAFFE_ENFORCE(styleIndex >= 0 && styleIndex < net_defs.size());
 
     if (styleIndex != current_style_index) {
         ANDROID_LOG(INFO, "Switching style to %s", kStyleNames[styleIndex].c_str());
-        predictor.reset(new caffe2::Predictor(net_defs[styleIndex].first, net_defs[styleIndex].second));
+        predictor.reset(
+                new caffe2::Predictor(net_defs[styleIndex].first, net_defs[styleIndex].second));
         current_style_index = styleIndex;
     }
 
@@ -186,11 +191,11 @@ Java_facebook_styletransfer_StyleTransfer_transformImageWithCaffe2(
     caffe2::TensorCPU image_tensor;
     image_tensor.Resize(1, height, width, kNumberOfChannels);
     int return_code = libyuv::Android420ToABGR(
-            reinterpret_cast<const uint8_t*>(Y),
+            reinterpret_cast<const uint8_t *>(Y),
             width,
-            reinterpret_cast<const uint8_t*>(U),
+            reinterpret_cast<const uint8_t *>(U),
             UVRowStride,
-            reinterpret_cast<const uint8_t*>(V),
+            reinterpret_cast<const uint8_t *>(V),
             UVRowStride,
             UVPixelStride,
             image_tensor.mutable_data<uint8_t>(),
@@ -200,11 +205,15 @@ Java_facebook_styletransfer_StyleTransfer_transformImageWithCaffe2(
     CAFFE_ENFORCE_EQ(return_code, 0);
 
     ANDROID_LOG(INFO, "Transforming image...");
-    const caffe2::TensorCPU* output_tensor = transformImage(*predictor, image_tensor);
+    const caffe2::TensorCPU *output_tensor = transformImage(*predictor, image_tensor);
 
     ANDROID_LOG(INFO, "Packing RGB pixels...");
     const std::vector<int> output_buffer = packRGBAPixels(*output_tensor, height, width);
 
     ANDROID_LOG(INFO, "Copying to output...");
     return toIntArray(env, output_buffer);
+
+} catch (std::exception &exception) {
+    ANDROID_LOG(ERROR, "Error performing StyleTransfer: %s", exception.what());
+    return nullptr;
 }
