@@ -24,7 +24,7 @@
 #include <libyuv.h>
 
 #define ANDROID_LOG(level, ...) __android_log_print(ANDROID_LOG_##level, "StyleTransfer", __VA_ARGS__);
-
+#define USE_OPEN_GL
 
 namespace {
 // Constants
@@ -137,30 +137,18 @@ Java_facebook_styletransfer_StyleTransfer_initCaffe2(
     for (const auto& name : kStyleNames) {
         auto init_net = loadNet(asset_manager, name + "/init_net.pb");
         auto predict_net = loadNet(asset_manager, name + "/predict_net.pb");
+
+#ifdef USE_OPEN_GL
+        ANDROID_LOG(INFO, "Converting prediction network to OpenGL implementation...");
+        caffe2::NetDef gl_predict_net;
+        CAFFE_ENFORCE(caffe2::tryConvertToOpenGL(init_net, predict_net, &gl_predict_net, true, false, true));
+        predict_net = gl_predict_net;
+#endif
+
         net_defs.emplace_back(std::move(init_net), std::move(predict_net));
     }
 
-//    ANDROID_LOG(INFO, "Running initialization network...");
-//    CAFFE_ENFORCE(workspace.RunNetOnce(init_net));
-
-//    try {
-//        openGLPredictor = new caffe2::GLPredictor(init_net, predict_net);
-//        ANDROID_LOG(ERROR, "StyleTransfer asdfsdfasdf: %s", openGLPredictor->def().DebugString().c_str());
-//    } catch(...) {
-//        ANDROID_LOG(INFO, "BAD$$$$$$$$$$$$$$$$$$$$$$");
-//    }
-
-//    _predictor = new caffe2::Predictor(init_net, predict_net);
-
-//    ANDROID_LOG(INFO, "Converting to OpenGL network...");
-//    caffe2::NetDef gl_net_def;
-//    CAFFE_ENFORCE(caffe2::tryConvertToOpenGL(init_net, predict_net, &gl_net_def));
-//
-//    ANDROID_LOG(INFO, "Creating Network...");
-//    net = workspace.CreateNet(gl_net_def);
-//    CAFFE_ENFORCE(net != nullptr);
-//
-//    ANDROID_LOG(INFO, "Initialization complete!");
+    ANDROID_LOG(INFO, "Initialization complete!");
 }
 
 extern "C"
@@ -179,14 +167,15 @@ Java_facebook_styletransfer_StyleTransfer_transformImageWithCaffe2(
 
     CAFFE_ENFORCE(styleIndex >= 0 && styleIndex < net_defs.size());
 
-    if (!predictor) {
-        ANDROID_LOG(WARN, "Predictor was null");
-    }
-
     if (styleIndex != current_style_index) {
         ANDROID_LOG(INFO, "Switching style to %s", kStyleNames[styleIndex].c_str());
         predictor.reset(new caffe2::Predictor(net_defs[styleIndex].first, net_defs[styleIndex].second));
         current_style_index = styleIndex;
+    }
+
+    if (!predictor) {
+        ANDROID_LOG(WARN, "Predictor was null");
+        return nullptr;
     }
 
     const jbyte *Y = env->GetByteArrayElements(YArray, nullptr);
