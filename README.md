@@ -35,3 +35,5 @@ All of these steps assume you have a proper Android SDK and NDK environment in p
 ## Building
 
 Building the app is as easy as downloading [Android Studio](https://developer.android.com/studio/index.html) and pressing the green button.
+
+Tested successfully on Samsung Galaxy S7 and S8.
