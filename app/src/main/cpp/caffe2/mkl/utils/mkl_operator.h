@@ -1,3 +1,19 @@
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef CAFFE2_UTILS_MKL_OPERATOR_H_
 #define CAFFE2_UTILS_MKL_OPERATOR_H_
 
@@ -51,8 +67,7 @@ class MKLOperator : public OperatorBase {
     try {
       return RunOnDevice();
     } catch (EnforceNotMet& err) {
-      err.AppendMessage(
-          "Error from operator: \n" + ProtoDebugString(debug_def()));
+      err.AppendMessage(getErrorMsg());
       throw;
     }
   }
@@ -60,14 +75,21 @@ class MKLOperator : public OperatorBase {
   // Waits for a previous event. Note that to properly wait and run
   // asynchronously, WaitEvent, RunAsync and Record should all be executed
   // on the same CPU thread.
-  void WaitEvent(const Event& ev) final {
-    context_.SwitchToDevice();
+  void WaitEvent(const Event& ev, int /* unused */) final {
     context_.WaitEvent(ev);
   }
 
-  void Record() final {
-    context_.SwitchToDevice();
-    context_.Record(&event_);
+  void WaitEvents(const std::vector<const Event*>& events, int /* unused */)
+      final {
+    for (const auto& ev : events) {
+      context_.WaitEvent(*ev);
+    }
+  }
+
+  void RecordEvent(const char* err_msg = nullptr) final {
+    if (event_) {
+      context_.Record(event_.get(), err_msg);
+    }
   }
 
   virtual bool RunOnDevice() = 0;
@@ -77,6 +99,14 @@ class MKLOperator : public OperatorBase {
   }
 
  protected:
+  std::string getErrorMsg() {
+    if (has_debug_def()) {
+      return "Error from operator: " + ProtoDebugString(debug_def());
+    } else {
+      return "Error from operator: no op def";
+    }
+  }
+
   MKLContext context_;
   // The primitive used in the operator.
   PrimitiveWrapper<T> primitive_;

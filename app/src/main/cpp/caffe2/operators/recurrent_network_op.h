@@ -1,3 +1,19 @@
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef CAFFE2_OPERATORS_RECURRENT_NETWORK_OP_H_
 #define CAFFE2_OPERATORS_RECURRENT_NETWORK_OP_H_
 
@@ -6,8 +22,8 @@
 #include "caffe2/core/operator.h"
 #include "caffe2/core/tensor.h"
 #include "caffe2/operators/recurrent_network_executor.h"
-#include "google/protobuf/text_format.h"
 #include "caffe2/utils/conversions.h"
+#include "caffe2/utils/math.h"
 
 CAFFE2_DECLARE_bool(caffe2_rnn_executor);
 
@@ -52,11 +68,10 @@ struct ScratchWorkspaces {
 };
 
 inline void UpdateTimestepBlob(Workspace* ws, std::string blob_name, int t) {
-  ws->CreateBlob(blob_name)->template GetMutable<TensorCPU>()->Resize(1);
+  ws->CreateBlob(blob_name)->GetMutable<TensorCPU>()->Resize(1);
   auto timestepBlob = ws->GetBlob(blob_name);
   CAFFE_ENFORCE(timestepBlob);
-  timestepBlob->template GetMutable<TensorCPU>()
-      ->template mutable_data<int32_t>()[0] = t;
+  timestepBlob->GetMutable<TensorCPU>()->mutable_data<int32_t>()[0] = t;
 }
 
 std::map<string, string> GetRecurrentMapping(
@@ -166,6 +181,8 @@ void extractLinks(
     const std::string& offsetArg,
     const std::string& windowArg,
     std::vector<detail::Link>* links);
+
+NetDef extractNetDef(const OperatorDef& op, const std::string& argName);
 } // namespace detail
 
 template <class Context>
@@ -182,11 +199,8 @@ class RecurrentNetworkOp final : public Operator<Context> {
             "timestep",
             "timestep")) {
     CAFFE_ENFORCE(ws);
-    const auto stepNet =
-        OperatorBase::GetSingleArgument<string>("step_net", "");
-    CAFFE_ENFORCE(
-        google::protobuf::TextFormat::ParseFromString(stepNet, &stepNetDef_),
-        "Invalid netdef");
+
+    stepNetDef_ = detail::extractNetDef(operator_def, "step_net");
 
     recurrentInputs_ = constructRecurrentInputs(operator_def, sharedWs_);
     links_ = constructLinks();
@@ -212,6 +226,14 @@ class RecurrentNetworkOp final : public Operator<Context> {
       }
       CAFFE_ENFORCE(stepNetDef_.type() != "async_dag");
     }
+  }
+
+  size_t NumObservers() override {
+    size_t num = this->observers_list_.size();
+    if (rnnExecutor_) {
+      num += rnnExecutor_->NumObserversStepNet();
+    }
+    return num;
   }
 
   std::vector<detail::RecurrentInput> constructRecurrentInputs(
@@ -297,9 +319,11 @@ class RecurrentNetworkOp final : public Operator<Context> {
 
     // If we don't have a backward step net, this operator is forward_only
     // and we can avoid creating multiple workspaces.
-
     bool has_backward_pass =
-        OperatorBase::GetSingleArgument<string>("backward_step_net", "") != "";
+        OperatorBase::HasSingleArgumentOfType<NetDef>("backward_step_net") ||
+        (OperatorBase::HasSingleArgumentOfType<string>("backward_step_net") &&
+         OperatorBase::GetSingleArgument<string>("backward_step_net", "") !=
+             "");
 
     // With backward pass: we need to create workspace for each timestep
     detail::ScratchWorkspaces* scratch =
@@ -345,7 +369,8 @@ class RecurrentNetworkOp final : public Operator<Context> {
           // Need to limit timestep parallelism because we cycle over workspaces
           rnnExecutor_->SetMaxParallelTimesteps(num_workspaces_on_fwd_only);
         }
-        rnnExecutor_->EnsureTimestepInitialized(t, currentStepWorkspace.get());
+        rnnExecutor_->EnsureTimestepInitialized(
+            t, currentStepWorkspace.get(), this->observers_list_);
       } else {
         // Use plain Caffe2 nets
         detail::UpdateTimestepBlob(currentStepWorkspace.get(), timestep_, t);
@@ -370,7 +395,7 @@ class RecurrentNetworkOp final : public Operator<Context> {
     return true;
   }
 
-  bool RunOnDevice() {
+  bool RunOnDevice() override {
     return DoRunWithType<float>();
   }
 
@@ -402,15 +427,8 @@ class RecurrentNetworkGradientOp final : public Operator<Context> {
         gradInputs_(OperatorBase::template GetRepeatedArgument<int32_t>(
             "outputs_with_grads")) {
     CAFFE_ENFORCE(ws);
-    const auto stepNet =
-        OperatorBase::GetSingleArgument<string>("backward_step_net", "");
 
-    if (stepNetDef_.type() == "rnn") {
-      stepNetDef_.set_type("simple");
-    }
-
-    CAFFE_ENFORCE(
-        google::protobuf::TextFormat::ParseFromString(stepNet, &stepNetDef_));
+    stepNetDef_ = detail::extractNetDef(operator_def, "backward_step_net");
 
     links_ = constructLinks();
     params_ = constructParams(operator_def);
@@ -744,7 +762,8 @@ class RecurrentNetworkGradientOp final : public Operator<Context> {
     }
     for (int32_t t = seqLen - 1; t >= 0; --t) {
       if (rnnExecutor_) {
-        rnnExecutor_->EnsureTimestepInitialized(t, stepWorkspaces[t].get());
+        rnnExecutor_->EnsureTimestepInitialized(
+            t, stepWorkspaces[t].get(), this->observers_list_);
       } else {
         auto* stepNet = stepWorkspaces[t].get()->GetNet(stepNetDef_.name());
         if (stepNet == nullptr) {
@@ -807,7 +826,7 @@ class RecurrentNetworkGradientOp final : public Operator<Context> {
     return true;
   }
 
-  bool RunOnDevice() {
+  bool RunOnDevice() override {
     return DoRunWithType<float>();
   }
 
@@ -838,8 +857,8 @@ class AccumulateInputGradientOp : public Operator<Context> {
 
   template<typename T>
   bool DoRunWithType() {
-    const auto t =
-        OperatorBase::Input<Tensor<CPUContext>>(0).template data<int32_t>()[0];
+    const auto& t0 = OperatorBase::Input<Tensor<CPUContext>>(0);
+    const auto t = t0.template data<int32_t>()[0];
     auto& og = Input(1);
     auto* g = Output(0);
 
@@ -887,8 +906,8 @@ class RNNApplyLinkOp : public Operator<Context> {
   bool DoRunWithType() {
     // Both internal and external appear as both input and output to enforce
     // correct dependency computation.
-    const auto t =
-        OperatorBase::Input<Tensor<CPUContext>>(0).template data<int32_t>()[0];
+    const auto& t0 = OperatorBase::Input<Tensor<CPUContext>>(0);
+    const auto t = t0.template data<int32_t>()[0];
     auto& external = Input(1);
 
     auto* internal_out = Output(0);

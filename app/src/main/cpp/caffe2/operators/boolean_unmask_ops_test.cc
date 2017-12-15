@@ -1,0 +1,86 @@
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include <iostream>
+
+#include <gtest/gtest.h>
+#include "caffe2/core/context.h"
+#include "caffe2/core/flags.h"
+#include "caffe2/core/operator.h"
+
+CAFFE2_DECLARE_string(caffe_test_root);
+
+namespace caffe2 {
+
+template <class DataT>
+static void AddScalarInput(
+    const DataT& value,
+    const string& name,
+    Workspace* ws,
+    bool isEmpty = false) {
+  Blob* blob = ws->CreateBlob(name);
+  auto* tensor = blob->GetMutable<TensorCPU>();
+  if (!isEmpty) {
+    tensor->Resize(vector<TIndex>{1});
+    *(tensor->mutable_data<DataT>()) = value;
+  } else {
+    tensor->Resize(vector<TIndex>{0});
+    tensor->mutable_data<DataT>();
+  }
+  return;
+}
+
+// Test case for BooleanUnmask operator
+//  mask1:   [ false ]
+//  values1: [ ]
+//  mask2:   [ true ]
+//  values2: [ 1.0 ]
+//
+//  Expected Output: [ 1.0 ]
+TEST(BooleanUnmaskTest, Test) {
+  Workspace ws;
+  OperatorDef def;
+
+  def.set_name("test");
+  def.set_type("BooleanUnmask");
+
+  def.add_input("mask1");
+  def.add_input("values1");
+  def.add_input("mask2");
+  def.add_input("values2");
+
+  def.add_output("unmasked_data");
+
+  AddScalarInput(false, "mask1", &ws);
+  AddScalarInput(float(), "values1", &ws, true);
+  AddScalarInput(true, "mask2", &ws);
+  AddScalarInput(1.0f, "values2", &ws);
+
+  unique_ptr<OperatorBase> op(CreateOperator(def, &ws));
+  EXPECT_NE(nullptr, op.get());
+
+  EXPECT_TRUE(op->Run());
+
+  Blob* unmasked_data_blob = ws.GetBlob("unmasked_data");
+  EXPECT_NE(nullptr, unmasked_data_blob);
+
+  auto& unmasked_data = unmasked_data_blob->Get<TensorCPU>();
+  EXPECT_EQ(unmasked_data.size(), 1);
+
+  CHECK_EQ(unmasked_data.data<float>()[0], 1.0f);
+}
+
+} // namespace caffe2

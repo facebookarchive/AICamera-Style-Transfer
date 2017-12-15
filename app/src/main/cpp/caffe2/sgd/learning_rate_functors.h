@@ -1,3 +1,19 @@
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef CAFFE2_SGD_LEARNING_RATE_FUNCTORS_H_
 #define CAFFE2_SGD_LEARNING_RATE_FUNCTORS_H_
 
@@ -22,6 +38,33 @@ class FixedLearningRate : public LearningRateFunctor<T> {
   T operator()(const int64_t /*iter*/) const override {
     return 1.;
   }
+};
+
+// Alter: alternatate learning rate with active_period and inactive_period.
+// update for for a duration of active_period and then stop for a duration of
+// inactive_period if active_first, and vice versa
+template <typename T>
+class AlternateLearningRate : public LearningRateFunctor<T> {
+ public:
+  AlternateLearningRate(
+      const int64_t active_period,
+      const int64_t inactive_period,
+      const bool active_first)
+      : active_period_(active_period),
+        inactive_period_(inactive_period),
+        active_first_(active_first) {}
+  T operator()(const int64_t iter) const override {
+    if (iter % (active_period_ + inactive_period_) <
+        (active_first_ ? active_period_ : inactive_period_)) {
+      return active_first_ ? 1. : 0.;
+    } else {
+      return active_first_ ? 0. : 1.;
+    };
+  };
+
+  int64_t active_period_;
+  int64_t inactive_period_;
+  bool active_first_;
 };
 
 // Step: return gamma ^ (floor(iter / step))
@@ -67,15 +110,47 @@ class InvLearningRate : public LearningRateFunctor<T> {
 template <typename T>
 class PolyLearningRate : public LearningRateFunctor<T> {
  public:
-  PolyLearningRate(const T power, const int64_t max_iter) 
+  PolyLearningRate(const T power, const int64_t max_iter)
       : power_(power), max_iter_(max_iter) {}
   T operator()(const int64_t iter) const override {
-    return std::pow(1 - T(iter)/T(max_iter_), power_);
+    return std::pow(1 - T(iter) / T(max_iter_), power_);
   }
   T power_;
   uint64_t max_iter_;
 };
 
-}  // namespace caffe2
+// LinearWarmup: return max(iter/num_iter, 1)
+template <typename T>
+class LinearWarmupLearningRate : public LearningRateFunctor<T> {
+ public:
+  LinearWarmupLearningRate(const T start_multiplier, const int64_t num_iter)
+      : start_multiplier_(start_multiplier), num_iter_(num_iter) {}
+  T operator()(const int64_t iter) const override {
+    if (iter >= num_iter_) {
+      return 1.;
+    }
+    return start_multiplier_ + (1. - start_multiplier_) * T(iter) / T(num_iter_);
+  }
+  T start_multiplier_;
+  uint64_t num_iter_;
+};
 
-#endif  // CAFFE2_SGD_LEARNING_RATE_FUNCTORS_H_
+// ConstantWarmup: return scale when iter < num_iter, and 1 otherwise
+template <typename T>
+class ConstantWarmupLearningRate : public LearningRateFunctor<T> {
+ public:
+  ConstantWarmupLearningRate(const T multiplier, const int64_t num_iter)
+      : multiplier_(multiplier), num_iter_(num_iter) {}
+  T operator()(const int64_t iter) const override {
+    if (iter >= num_iter_) {
+      return 1.;
+    }
+    return T(multiplier_);
+  }
+  T multiplier_;
+  uint64_t num_iter_;
+};
+
+} // namespace caffe2
+
+#endif // CAFFE2_SGD_LEARNING_RATE_FUNCTORS_H_

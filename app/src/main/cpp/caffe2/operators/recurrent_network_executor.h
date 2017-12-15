@@ -1,7 +1,24 @@
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef CAFFE2_OPERATORS_RECURRENT_NETWORK_EXECUTOR_H_
 #define CAFFE2_OPERATORS_RECURRENT_NETWORK_EXECUTOR_H_
 
 #include <map>
+#include <unordered_set>
 #include <vector>
 
 #include "caffe2/core/context.h"
@@ -12,6 +29,21 @@
 
 namespace caffe2 {
 
+/**
+ * RecurrentNetworkExecutor is a specialized runtime for recurrent
+ * neural networks (RNNs). It is invoked from the RecurrentNetworkOp
+ * and RecurrentNetworkGradientOp.
+ *
+ * Its main benefit over running each RNN timestep as a separate net
+ * is that it can run ops in subsequent timesteps in parallel when possible.
+ * For example, multi-layer LSTMs allow for timestep parallelism because
+ * next timestep's lower layer can start executing at the same time as
+ * the same timestep's upper layer.
+ *
+ * There are two implementations of the RNN executor: one for CPUs
+ * (ThreadedRecurrentNetworkExecutor) and another for GPUs
+ * (CUDARecurrentNetworkExecutor).
+ */
 class RecurrentNetworkExecutorBase {
  protected:
   explicit RecurrentNetworkExecutorBase(
@@ -27,61 +59,152 @@ class RecurrentNetworkExecutorBase {
   }
 
  public:
-  virtual ~RecurrentNetworkExecutorBase() {}
+  virtual ~RecurrentNetworkExecutorBase() {
+    if (debug_) {
+      if (timestep_ops_.size() > 0) {
+        PrintInfo(0);
+      }
+    }
+  }
 
   virtual bool Run(int T) = 0;
 
   virtual bool RunBackwards(int T) = 0;
 
   /**
-   * Callers must call this before running an execution that contains
-   * timestep t. On first call, this will initialize the data structures
-   * for the given timestep. For subsequent calls, this has no cost.
+   * Callers must call EnsureTimestepInitialized before starting execution
+   * for each of the relevant timesteps. If timestep was initialized before,
+   * this is a no-op. First time this is called the dependencies of the
+   * operators in timestep are analyzed, and that incurs higher overhead
+   * than subsequent calls.
    */
-  void EnsureTimestepInitialized(int t, Workspace* ws) {
+  void EnsureTimestepInitialized(
+      int t,
+      Workspace* ws,
+      const std::vector<std::unique_ptr<ObserverBase<OperatorBase>>>&
+          observers_list) {
     if (timestep_ops_template_.size() == 0) {
+      // Firsrt invocation -- compute dependencies
       CalculateInternalDependencies();
+
+      // Label ops based on whether they contain reference to the timestep
+      // blob. This is an optimization to avoid string comparisons later.
+      for (auto& rnn_op : timestep_ops_template_) {
+        rnn_op.has_timestep_blob = false;
+        const OperatorDef& op = step_net_def_.op(rnn_op.order);
+        for (int i = 0; i < op.input_size(); i++) {
+          if (op.input(i) == timestep_blob_) {
+            rnn_op.has_timestep_blob = true;
+            break;
+          }
+        }
+        CAFFE_ENFORCE(
+            !HasOutput(op, timestep_blob_),
+            "Timestep cannot be output of an op: ",
+            timestep_blob_,
+            " op=" + ProtoDebugString(op));
+      }
     }
+
+    // Initialize timestep if it is not initialized
     if (timestep_ops_.size() <= t ||
         (timestep_ops_.size() > t && timestep_ops_[t].size() == 0)) {
+      // Initialize empty timestep ops vectors for each timestep preceding
+      // this.
       for (int j = timestep_ops_.size(); j < t + 1; j++) {
         timestep_ops_.push_back(std::vector<RNNNetOperator>());
+        timestep_ops_.back().reserve(timestep_ops_template_.size());
       }
+
+      // Keep track of workspaces for optimization in forward-only case
+      if (workspaces_.size() < t + 1) {
+        workspaces_.resize(t + 1);
+      }
+      workspaces_[t] = ws;
 
       // Create a specific timestep blob for this timestep. This is to
       // avoid conflicting timestep blobs when reusing workspaces, as with
       // the forward-only mode.
       std::string this_timestep_blob =
-        timestep_blob_ + "_rnnexec_t" + caffe2::to_string(t);
-      ws->CreateBlob(this_timestep_blob)->template GetMutable<TensorCPU>()->Resize(1);
+          timestep_blob_ + "_rnnexec_t" + caffe2::to_string(t);
+      ws->CreateBlob(this_timestep_blob)->GetMutable<TensorCPU>()->Resize(1);
       auto b = ws->GetBlob(this_timestep_blob);
       CAFFE_ENFORCE(b);
-      b->template GetMutable<TensorCPU>()
-          ->template mutable_data<int32_t>()[0] = t;
+      b->GetMutable<TensorCPU>()->mutable_data<int32_t>()[0] = t;
 
       // Copy the operators from template
       for (auto& template_rnn_op : timestep_ops_template_) {
         auto& rnn_op = template_rnn_op;
-        OperatorDef op_copy = step_net_def_.op(rnn_op.order);
 
-        // Rename timestep references to use the timestep specific timestep blob
-        for (int i = 0; i < op_copy.input_size(); i++) {
-          if (op_copy.input(i) == timestep_blob_) {
-            op_copy.set_input(i, this_timestep_blob);
+        // For ops that have the timestep blob as an input we need to
+        // create a new operator definition with the timestep-specific
+        // timestep blob. This is required to avoid race conditions when
+        // multiple timesteps execute in paralle.
+        if (rnn_op.has_timestep_blob) {
+          OperatorDef op_copy = step_net_def_.op(rnn_op.order);
+
+          for (int i = 0; i < op_copy.input_size(); i++) {
+            if (op_copy.input(i) == timestep_blob_) {
+              op_copy.set_input(i, this_timestep_blob);
+            }
+          }
+
+          rnn_op.op = CreateOperator(op_copy, ws);
+          for (const auto& observer : observers_list) {
+            std::unique_ptr<ObserverBase<OperatorBase>> observer_copy =
+                observer->copy(rnn_op.op.get());
+            CAFFE_ENFORCE(
+                observer_copy,
+                "Observers without copy() implemented cannot be attached "
+                "to RNN using RNNExecutor.");
+            rnn_op.op->AttachObserver(std::move(observer_copy));
+          }
+        } else {
+          // Optimization for forward-only models when we can share workspaces
+          // with timesteps: then we can just copy the op reference.
+          if (t > max_parallel_timesteps_ && max_parallel_timesteps_ > 0 &&
+              workspaces_[t - max_parallel_timesteps_] == ws) {
+            rnn_op.op =
+                timestep_ops_[t - max_parallel_timesteps_][rnn_op.order].op;
+          } else {
+            // Otherwise, we need to create a brand new op with the workspace
+            // owned by this timestep.
+            rnn_op.op = CreateOperator(step_net_def_.op(rnn_op.order), ws);
+            for (const auto& observer : observers_list) {
+              std::unique_ptr<ObserverBase<OperatorBase>> observer_copy =
+                  observer->copy(rnn_op.op.get());
+              CAFFE_ENFORCE(
+                  observer_copy,
+                  "Observers without copy() implemented cannot be attached "
+                  "to RNN using RNNExecutor.");
+              rnn_op.op->AttachObserver(std::move(observer_copy));
+            }
           }
         }
-        CAFFE_ENFORCE(!HasOutput(op_copy, timestep_blob_),
-          "Timestep cannot be output of an op: ", timestep_blob_,
-          " op=" + ProtoDebugString(op_copy));
+        rnn_op.op->DisableEvent();
 
-        rnn_op.op = CreateOperator(op_copy, ws);
         timestep_ops_[t].emplace_back(rnn_op);
       }
     }
   }
 
+  /**
+   * Set limit for the number of timesteps that run in parallel. Useful
+   * for forward-only execution when we rotate workspaces over timesteps,
+   * i.e when timestep[t] and timestep[t + p] have same workspace.
+   */
   void SetMaxParallelTimesteps(int p) {
     max_parallel_timesteps_ = p;
+  }
+
+  size_t NumObserversStepNet() {
+    size_t num = 0;
+    for (auto& ops_at_timestep_t : timestep_ops_) {
+      for (auto& rnn_op : ops_at_timestep_t) {
+        num += rnn_op.op->NumObservers();
+      }
+    }
+    return num;
   }
 
  private:
@@ -123,30 +246,27 @@ class RecurrentNetworkExecutorBase {
    */
   void infer_dependencies(
       int start_i,
-      std::set<string> outputs,
+      std::unordered_set<string> outputs,
       std::vector<RNNNetOperator>& rnn_ops,
-      std::set<int>* dep_ops) {
-    std::set<string> frontier = outputs;
-    std::set<int> already_accounted_deps;
+      std::unordered_set<int>* dep_ops) {
+    std::unordered_set<int> already_accounted_deps;
     int num_ops = step_net_def_.op_size();
+    bool ignore_links = this->ignoreLinkDependencies();
     for (int j = 0; j < num_ops - 1 && !outputs.empty(); j++) {
       int i = (start_i + j) % num_ops;
-      if (rnn_ops[i].link_op && this->ignoreLinkDependencies()) {
+      if (ignore_links && rnn_ops[i].link_op) {
         continue;
       }
-      for (auto& outp : frontier) {
+      for (auto& outp : outputs) {
         if (has_input(outp, i)) {
-          if (outputs.find(outp) != outputs.end()) {
-            if (already_accounted_deps.find(i) ==
-                already_accounted_deps.end()) {
-              dep_ops->insert(i);
-            }
+          if (already_accounted_deps.find(i) == already_accounted_deps.end()) {
+            dep_ops->insert(i);
+          }
 
-            // Now we can take the deps of this ops and not
-            // add them anymore
-            for (int odep : rnn_ops[i].dependencies) {
-              already_accounted_deps.insert(odep);
-            }
+          // Now we can take the deps of this ops and not
+          // add them anymore
+          for (int odep : rnn_ops[i].dependencies) {
+            already_accounted_deps.insert(odep);
           }
           for (string& dep_out : op_deps_[i]) {
             auto oit = outputs.find(dep_out);
@@ -155,8 +275,8 @@ class RecurrentNetworkExecutorBase {
               // passed through that op
               outputs.erase(oit);
             }
-            frontier.insert(dep_out);
           }
+          break;
         }
       }
     }
@@ -172,8 +292,7 @@ class RecurrentNetworkExecutorBase {
   void add_race_conflict_dependencies(
       int opidx,
       std::vector<RNNNetOperator>& rnn_ops,
-      std::set<int>* dep_ops) {
-
+      std::unordered_set<int>* dep_ops) {
     for (int i = 0; i < rnn_ops.size(); i++) {
       if (i == opidx) {
         continue;
@@ -200,22 +319,19 @@ class RecurrentNetworkExecutorBase {
     }
   }
 
-
-
+  /**
+   * Calculate the dependencies between ops inside timestep and across
+   * timestep. These are store in timestep_ops_ vector that is copied
+   * for each timestep.
+   */
   void CalculateInternalDependencies() {
-    /**
-     * Calculate the dependencies between ops inside timestep and across
-     * timestep. These are store in timestep_ops_ vector that is copied
-     * for each timestep.
-     */
     for (int i = 0; i < step_net_def_.op_size(); i++) {
       timestep_ops_template_.push_back(RNNNetOperator(step_net_def_.op(i), i));
     }
-
     // Then see which outputs appear as inputs, and those are
     // the internal blobs.
     for (auto& rnn_op : timestep_ops_template_) {
-      set<string> dep_outputs;
+      std::unordered_set<string> dep_outputs;
       for (auto& outp : op_deps_[rnn_op.order]) {
         dep_outputs.insert(outp);
       }
@@ -232,7 +348,7 @@ class RecurrentNetworkExecutorBase {
 
       // Compute dependencies of this op.
       if (!rnn_op.link_op || !this->ignoreLinkDependencies()) {
-        std::set<int> dependent_ops;
+        std::unordered_set<int> dependent_ops;
         infer_dependencies(
             rnn_op.order + 1,
             dep_outputs,
@@ -283,7 +399,6 @@ class RecurrentNetworkExecutorBase {
         }
       }
     }
-
     // Find ops that have no recurrent inputs, and bind them
     // to the last op of the timestep. If there is only one op
     // in the step net, then it will depend on itself. Note that
@@ -303,14 +418,13 @@ class RecurrentNetworkExecutorBase {
         timestep_ops_template_[dep].parents.push_back(rnn_op.order);
       }
     }
-
     AnalyzeOps();
   }
 
-
-protected:
+ protected:
   /**
-   * For debug purposes
+   * For debug purposes, print the dependency structure. Set
+   * rnn_executor_debug=1 in the RecurrentNetworkOp to enable.
    */
   void PrintInfo(int t) {
     auto& rnn_ops = timestep_ops_[t];
@@ -344,8 +458,6 @@ protected:
     }
   }
 
- protected:
-
   virtual void AnalyzeOps() {}
 
   virtual bool ignoreLinkDependencies() = 0;
@@ -357,10 +469,14 @@ protected:
 
   NetDef step_net_def_;
   std::vector<std::vector<string>> op_deps_;
+  std::vector<Workspace*> workspaces_;
   std::map<string, string> recurrent_input_map_;
   std::string timestep_blob_;
 
   int max_parallel_timesteps_ = -1;
+
+ public:
+  bool debug_ = false;
 };
 
 template <class Context>
@@ -380,7 +496,7 @@ class ThreadedRecurrentNetworkExecutor : public RecurrentNetworkExecutorBase {
         failed_(false) {}
 
   ~ThreadedRecurrentNetworkExecutor() {
-    job_queue_.NoMoreJobs();
+    task_queue_.NoMoreJobs();
     VLOG(1) << "Joining workers.";
     for (auto& worker : workers_) {
       worker.join();
@@ -406,9 +522,9 @@ class ThreadedRecurrentNetworkExecutor : public RecurrentNetworkExecutorBase {
 
   void WorkerFunction();
 
-  void RunOp(OpJob job, int thread_id);
+  void RunOp(OpTask job, int thread_id);
 
-  SimpleQueue<OpJob> job_queue_;
+  SimpleQueue<OpTask> task_queue_;
   std::atomic<int> countdown_;
   std::atomic<bool> failed_;
   std::atomic<int> finished_timesteps_;

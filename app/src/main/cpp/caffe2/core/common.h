@@ -1,3 +1,19 @@
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef CAFFE2_CORE_COMMON_H_
 #define CAFFE2_CORE_COMMON_H_
 
@@ -147,11 +163,11 @@ make_unique(Args&&...) = delete;
 
 #endif
 
-// to_string implementation for Android related stuff.
-#ifndef __ANDROID__
-using std::to_string;
-using std::stoi;
-#else
+// to_string, stoi and stod implementation for Android related stuff.
+// Note(jiayq): Do not use the CAFFE2_TESTONLY_FORCE_STD_STRING_TEST macro
+// outside testing code that lives under common_test.cc
+#if defined(__ANDROID__) || defined(CAFFE2_TESTONLY_FORCE_STD_STRING_TEST)
+#define CAFFE2_TESTONLY_WE_ARE_USING_CUSTOM_STRING_FUNCTIONS 1
 template <typename T>
 std::string to_string(T value)
 {
@@ -160,15 +176,34 @@ std::string to_string(T value)
   return os.str();
 }
 
-inline int stoi(const string& str)
-{
+inline int stoi(const string& str) {
   std::stringstream ss;
   int n = 0;
   ss << str;
   ss >> n;
   return n;
 }
-#endif
+
+inline double stod(const string& str, std::size_t* pos = 0) {
+  std::stringstream ss;
+  ss << str;
+  double val = 0;
+  ss >> val;
+  if (pos) {
+    if (ss.tellg() == -1) {
+      *pos = str.size();
+    } else {
+      *pos = ss.tellg();
+    }
+  }
+  return val;
+}
+#else
+#define CAFFE2_TESTONLY_WE_ARE_USING_CUSTOM_STRING_FUNCTIONS 0
+using std::to_string;
+using std::stoi;
+using std::stod;
+#endif // defined(__ANDROID__) || defined(CAFFE2_FORCE_STD_STRING_FALLBACK_TEST)
 
 // dynamic cast reroute: if RTTI is disabled, go to reinterpret_cast
 template <typename Dst, typename Src>
@@ -221,6 +256,10 @@ extern bool g_caffe2_has_cuda_linked;
 inline bool HasCudaRuntime() {
   return g_caffe2_has_cuda_linked;
 }
+
+// Returns which setting Caffe2 was configured and built with (exported from
+// CMake)
+const std::map<string, string>& GetBuildOptions();
 
 }  // namespace caffe2
 

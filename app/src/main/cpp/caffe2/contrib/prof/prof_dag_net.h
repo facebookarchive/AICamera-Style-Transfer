@@ -1,3 +1,19 @@
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #pragma once
 
 #include "caffe2/core/net_dag.h"
@@ -25,11 +41,15 @@ class ProfDAGNet : public DAGNetBase {
   bool SupportsAsync() override {
     return false;
   }
-  bool RunAsync() override;
   ProfDAGProtos GetOperatorStats();
 
+  // GetPerOperatorCost collects the execution time of each operator, the
+  // output is formatted as a map: (netName__opIndex__opType, cost)
+  ProfDAGProtos GetPerOperatorCost();
+
  protected:
-  bool RunAt(const std::vector<int>& chain) override;
+  bool DoRunAsync() override;
+  bool RunAt(int chain_id, const std::vector<int>& chain) override;
   void PrintStats();
   void ValidateOpTensorDevices();
   ProfDAGProto ProtoMsg(std::pair<std::string, Stats> op_stat) const;

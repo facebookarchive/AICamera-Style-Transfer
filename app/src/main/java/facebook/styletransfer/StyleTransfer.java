@@ -130,8 +130,11 @@ public class StyleTransfer extends Activity {
     private class GestureListener extends GestureDetector.SimpleOnGestureListener {
         @Override
         public boolean onDoubleTap(MotionEvent e) {
-            mStyleIndex = 0;
-            Log.d(TAG, "Double tap (reset)");
+            if (mStyleIndex != 0) {
+                mStyleIndex = 0;
+                mTextView.setText(STYLES[0]);
+                mViewSwitcher.showPrevious();
+            }
             return true;
         }
 
@@ -144,7 +147,7 @@ public class StyleTransfer extends Activity {
                     }
                     mStyleIndex -= 1;
                 }
-                Log.d(TAG, "Swipe right: " + mStyleIndex);
+                Log.i(TAG, "Swipe right: " + mStyleIndex);
             } else if (velocityX < 0) {
                 if (mStyleIndex < STYLES.length - 1) {
                     if (mStyleIndex == 0) {
@@ -153,14 +156,13 @@ public class StyleTransfer extends Activity {
                     mStyleIndex += 1;
                 }
 
-                Log.d(TAG, "Swipe left: " + mStyleIndex);
+                Log.i(TAG, "Swipe left: " + mStyleIndex);
             }
 
             mTextView.setText(STYLES[mStyleIndex]);
 
             return true;
         }
-
     }
 
     static {
@@ -185,7 +187,7 @@ public class StyleTransfer extends Activity {
             try {
                 initCaffe2(mAssetManager);
             } catch (Exception e) {
-                Log.d(TAG, "Couldn't load neural network.");
+                Log.e(TAG, "Couldn't load neural network.");
             }
             return null;
         }
@@ -210,14 +212,8 @@ public class StyleTransfer extends Activity {
 
             final Matrix transform = new Matrix();
             transform.setRotate(90);
-            Bitmap rotated = Bitmap.createBitmap(
-                    bitmap,
-                    0,
-                    0,
-                    bitmap.getWidth(),
-                    bitmap.getHeight(),
-                    transform,
-                    false);
+            final Bitmap rotated =
+                    Bitmap.createBitmap(bitmap, 0, 0, width, height, transform, false);
 
             mImageView.setImageBitmap(rotated);
         }
@@ -229,11 +225,10 @@ public class StyleTransfer extends Activity {
                 mImage = reader.acquireLatestImage();
 
                 if (mImage == null) {
-                    Log.d(TAG, "Acquired image was null");
+                    Log.w(TAG, "Acquired image was null");
                     return;
                 }
                 if (mCurrentlyProcessing.get() || mStyleIndex == 0) {
-                    Log.d(TAG, "early stop");
                     mImage.close();
                     return;
                 }
@@ -284,16 +279,8 @@ public class StyleTransfer extends Activity {
     private CameraDevice mCameraDevice;
     private static final String[] STYLES = {
             "Preview",
-            "Animals",
-            "Composition",
-            "Crayon",
-            "Flowers",
-            "Lines",
-            "Mosaic",
             "Night",
-            "Page",
-            "Watercolor",
-            "Whale",
+            "Flowers",
     };
 
     private CameraCaptureSession mCameraCaptureSession;
@@ -329,8 +316,8 @@ public class StyleTransfer extends Activity {
 
         setContentView(R.layout.activity_styletransfer);
 
-        mViewSwitcher = (ViewSwitcher)findViewById(R.id.view_switcher);
-        mTextView = (TextView)findViewById(R.id.textView);
+        mViewSwitcher = (ViewSwitcher) findViewById(R.id.view_switcher);
+        mTextView = (TextView) findViewById(R.id.textView);
         mImageView = (ImageView) findViewById(R.id.imageView);
 
         mTextureView = (TextureView) findViewById(R.id.textureView);
@@ -389,21 +376,21 @@ public class StyleTransfer extends Activity {
             final StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
 
             final Size[] previewSizes = map.getOutputSizes(SurfaceTexture.class);
-            mPreviewSize = previewSizes[0];
+            mPreviewSize = previewSizes[previewSizes.length - 3];
             for (Size size : previewSizes) {
-                if (size.getWidth() < 1000 && size.getHeight() < 1000) {
-                    Log.d(TAG, "Using preview size: " + size.toString());
+                if (size.getWidth() < 500 && size.getHeight() < 500) {
                     mPreviewSize = size;
                     break;
                 }
             }
+            Log.i(TAG, "Using preview size: " + mPreviewSize.toString());
 
             final int cameraPermission = checkSelfPermission(Manifest.permission.CAMERA);
             final int writePermission = checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE);
             if (cameraPermission == PERMISSION_GRANTED && writePermission == PERMISSION_GRANTED) {
                 cameraManager.openCamera(mCameraId, cameraStateCallback, null);
             } else {
-                Log.d(TAG, "Requesting permission");
+                Log.i(TAG, "Requesting permission");
                 final String[] permissions = {
                         Manifest.permission.CAMERA,
                         Manifest.permission.WRITE_EXTERNAL_STORAGE

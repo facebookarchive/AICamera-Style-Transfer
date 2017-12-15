@@ -1,3 +1,19 @@
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef BOOLEAN_MASK_OPS_H
 #define BOOLEAN_MASK_OPS_H
 
@@ -32,6 +48,21 @@ class SequenceMaskOp final : public Operator<Context> {
             -1.0f * std::numeric_limits<float>::infinity())) {
     // Mode argument is required
     mode_ = GetArgument(operator_def, "mode").s();
+    // batch argument is optional, but if not given, we don't want a default val
+    if (HasArgument("batch")) {
+      batch_ = GetArgument(operator_def, "batch").i();
+    }
+
+    if (HasArgument("repeat_from_axis")) {
+      CAFFE_ENFORCE(
+          mode_ == "sequence",
+          "repeat_from_axis currently only supported in sequence mode.");
+      CAFFE_ENFORCE(
+          !HasArgument("batch"),
+          "repeat_from_axis and batch not currently supported together.");
+      repeat_from_ =
+          OperatorBase::GetSingleArgument<int>("repeat_from_axis", -1);
+    }
   }
 
   bool RunOnDevice() override;
@@ -45,8 +76,10 @@ class SequenceMaskOp final : public Operator<Context> {
   std::string mode_;
   bool grad_;
   float fill_val_;
+  int batch_;
+  int repeat_from_;
 };
 
-} // caffe2
+} // namespace caffe2
 
 #endif

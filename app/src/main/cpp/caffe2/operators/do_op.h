@@ -1,3 +1,19 @@
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef CAFFE2_OPERATORS_DO_OP_H_
 #define CAFFE2_OPERATORS_DO_OP_H_
 
@@ -23,6 +39,11 @@ class DoOp final : public Operator<Context> {
         "net must be specified in Do operator");
     net_def_ = this->template GetSingleArgument<NetDef>("net", NetDef());
     is_gradient_op_ = operator_def.is_gradient_op();
+    reuse_workspace_ =
+        this->template GetSingleArgument<bool>("reuse_workspace", false);
+    CAFFE_ENFORCE(
+        !is_gradient_op_ || !reuse_workspace_,
+        "Gradient Do op requires use of stacked workspaces");
 
     const auto& inner_blobs =
         this->template GetRepeatedArgument<std::string>("inner_blobs");
@@ -128,6 +149,7 @@ class DoOp final : public Operator<Context> {
 
   std::unordered_map<std::string, std::string> blob_bindings_;
   bool is_gradient_op_;
+  bool reuse_workspace_;
   NetDef net_def_;
   Workspace* parent_ws_;
 };

@@ -1,3 +1,19 @@
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #pragma once
 #include "caffe2/operators/conv_pool_op_base.h"
 
@@ -35,7 +51,8 @@ class ChannelShuffleOp final : public ConvPoolOpBase<Context> {
             S,
             Y->template mutable_data<float>() + g * S + n * C * S,
             G * S,
-            &context_);
+            &context_,
+            X.meta().copy());
       }
     }
     return true;
@@ -74,7 +91,8 @@ class ChannelShuffleGradientOp final : public ConvPoolOpBase<Context> {
             G * S,
             dX->template mutable_data<float>() + g * K * S + n * C * S,
             S,
-            &context_);
+            &context_,
+            dY.meta().copy());
       }
     }
     return true;

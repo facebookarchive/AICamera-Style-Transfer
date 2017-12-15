@@ -1,3 +1,19 @@
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef CAFFE2_UTILS_PROTO_UTILS_H_
 #define CAFFE2_UTILS_PROTO_UTILS_H_
 
@@ -281,6 +297,23 @@ inline void AddArgument(const string& name, const T& value, OperatorDef* def) {
   GetMutableArgument(name, true, def)->CopyFrom(MakeArgument(name, value));
 }
 
-}  // namespace caffe2
+bool inline operator==(const DeviceOption& dl, const DeviceOption& dr) {
+  return IsSameDevice(dl, dr);
+}
 
-#endif  // CAFFE2_UTILS_PROTO_UTILS_H_
+} // namespace caffe2
+
+namespace std {
+template <>
+struct hash<caffe2::DeviceOption> {
+  typedef caffe2::DeviceOption argument_type;
+  typedef std::size_t result_type;
+  result_type operator()(argument_type const& device_option) const {
+    std::string serialized;
+    CAFFE_ENFORCE(device_option.SerializeToString(&serialized));
+    return std::hash<std::string>{}(serialized);
+  }
+};
+} // namespace std
+
+#endif // CAFFE2_UTILS_PROTO_UTILS_H_

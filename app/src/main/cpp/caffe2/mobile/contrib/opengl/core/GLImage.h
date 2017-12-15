@@ -1,4 +1,19 @@
-// Copyright 2004-present Facebook. All Rights Reserved.
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 
 #pragma once
 
@@ -56,7 +71,8 @@ class GLImage {
         texture_height(_height * _tile_y),
         slices(channels_to_slices(_channels, _tile_x, _tile_y)),
         textures(allocate_textures(slices, texture_loader)) {
-    CAFFE_ENFORCE_EQ(slices * tile_x * tile_y, (channels + 3) / 4);
+    CAFFE_ENFORCE_EQ(
+        slices, ((channels + 3) / 4 + tile_x * tile_y - 1) / (tile_x * tile_y));
   }
 
   GLImage(int _width,

@@ -1,4 +1,19 @@
-// Copyright 2004-present Facebook. All Rights Reserved.
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 
 #ifndef CAFFE2_OPERATORS_RECURRENT_NETWORK_EXECUTOR_INCL_H_
 #define CAFFE2_OPERATORS_RECURRENT_NETWORK_EXECUTOR_INCL_H_
@@ -8,21 +23,25 @@
 
 namespace caffe2 {
 
+/**
+ * Struct for operator in a timestep and its dependenceis.
+ */
 struct RNNNetOperator {
-  // Operator
-  int order;
+  int order; // Position in the step net (i.e nth operator)
   std::shared_ptr<OperatorBase> op = nullptr;
-  bool link_op;
+  bool link_op; // Special flag for link op, see RNNApplyLinkOp.
 
-  // Bookkeeping
+  // Bookkeeping, used by ThreadedRecurrentNetworkExecutor
   int num_dynamic_inputs = 0;
   int num_recurrent_inputs = 0;
-
-  // Dependencies
   std::atomic<int> proc_inputs;
+
+  // Dependencies to other ops. If dependency index < order, it is
+  // a recurrent dependency (i.e to the next timestep)
   std::vector<int> dependencies;
   std::vector<int> parents;
-  bool frontier = true;
+  bool frontier = true; // For ops that are launched first
+  bool has_timestep_blob = false;
 
   explicit RNNNetOperator(const OperatorDef& def, int order) : order(order) {
     proc_inputs = 0;
@@ -42,14 +61,17 @@ struct RNNNetOperator {
   }
 };
 
-struct OpJob {
+/**
+ * Data structure for a scheduled task in the task queue.
+ */
+struct OpTask {
   int timestep;
-  int op_idx;
-  int T;
-  int direction;
+  int op_idx; // matches RNNNetOperator.order
+  int T; // number of timesteps in this execution
+  int direction; // +1 for forward, -1 for backward pass
   int stream_id = -1; // only used by gpu version
-  OpJob() {}
-  OpJob(int _timestep, int _op_idx, int _T, int _direction)
+  OpTask() {}
+  OpTask(int _timestep, int _op_idx, int _T, int _direction)
       : timestep(_timestep), op_idx(_op_idx), T(_T), direction(_direction) {
     CHECK(direction == 1 || direction == -1);
     CHECK(timestep >= 0 && timestep < _T);

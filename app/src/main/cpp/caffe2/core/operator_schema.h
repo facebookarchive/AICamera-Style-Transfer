@@ -1,3 +1,19 @@
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef CAFFE2_CORE_OPERATOR_SCHEMA_H_
 #define CAFFE2_CORE_OPERATOR_SCHEMA_H_
 
@@ -184,6 +200,20 @@ class OpSchema {
    * @brief Register the Cost inference function.
    */
   OpSchema& CostInferenceFunction(CostInferenceFunctionType&& function);
+
+#ifdef _MSC_VER
+  /**
+   * @brief Register the Cost inference function via a pointer.
+   */
+  inline OpSchema& CostInferenceFunction(
+      struct Cost(*func)(const OperatorDef&, const vector<TensorShape>&)) {
+    // Note: This is here in order to resolve an MSVC compiler issue: it
+    // does not automatically convert a function pointer to a std::function,
+    // and needs an explicit conversion.
+    return CostInferenceFunction(CostInferenceFunctionType(func));
+  }
+#endif // _MSC_VER
+
   bool HasCostInferenceFunction() const {
     return !!cost_inference_function_;
   }
@@ -441,6 +471,22 @@ InferOpInputOutputDevice(const OperatorDef& op) {
       op_schema, "Device inference failed. No schema for: ", op.type());
   // TODO(wyiming) : add try catch here.
   return op_schema->InferDevice(op);
+}
+
+template <uint64_t OpsPerPoint>
+OpSchema::Cost PointwiseCostInference(
+    const OperatorDef& /* unused */,
+    const vector<TensorShape>& inputs) {
+  struct OpSchema::Cost c;
+  const TensorShape X = inputs[0];
+  uint64_t size = 1;
+
+  for (auto i = 0; i < X.dims().size(); ++i) {
+    size *= X.dims(i);
+  }
+
+  c.flops = size * OpsPerPoint;
+  return c;
 }
 
 } // namespace caffe2

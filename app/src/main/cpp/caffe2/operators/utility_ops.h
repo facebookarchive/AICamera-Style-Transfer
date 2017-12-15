@@ -1,3 +1,19 @@
+/**
+ * Copyright (c) 2016-present, Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef CAFFE2_OPERATORS_UTILITY_OPS_H_
 #define CAFFE2_OPERATORS_UTILITY_OPS_H_
 
@@ -206,14 +222,17 @@ template <class Context>
 class FlattenOp : public Operator<Context> {
  public:
   USE_OPERATOR_CONTEXT_FUNCTIONS;
-  USE_SIMPLE_CTOR_DTOR(FlattenOp);
+
+  FlattenOp(const OperatorDef& operator_def, Workspace* ws)
+      : Operator<Context>(operator_def, ws),
+        axis_(OperatorBase::GetSingleArgument<int>("axis", 1)) {}
 
   bool RunOnDevice() override {
     auto& input = Input(0);
     auto* output = Output(0);
     CAFFE_ENFORCE_GE(
-        input.dims().size(), 2, "The rank of the tensor must be >= 2.");
-    output->Resize(input.dim(0), input.size_from_dim(1));
+        input.dims().size(), axis_, "The rank of the tensor must be >= axis.");
+    output->Resize(input.size_to_dim(axis_), input.size_from_dim(axis_));
     context_.template CopyItems<Context, Context>(
         input.meta(),
         input.size(),
@@ -221,6 +240,9 @@ class FlattenOp : public Operator<Context> {
         output->raw_mutable_data(input.meta()));
     return true;
   }
+
+ private:
+  int axis_;
 };
 
 template <class Context>
@@ -380,6 +402,62 @@ class WeightedSumOp : public Operator<Context> {
     return true;
   }
   bool RunOnDevice() override;
+};
+
+template <class Context>
+class WeightedSumGradientOp : public Operator<Context> {
+ public:
+  USE_OPERATOR_CONTEXT_FUNCTIONS;
+
+  WeightedSumGradientOp(const OperatorDef& operator_def, Workspace* ws)
+      : Operator<Context>(operator_def, ws),
+        grad_on_w_(OperatorBase::GetSingleArgument<bool>("grad_on_w", false)) {}
+
+  template <typename DstType>
+  bool DoRunWithType() {
+    CAFFE_ENFORCE_EQ(InputSize() % 2, 1);
+    auto output_size = grad_on_w_ ? InputSize() - 1 : InputSize() / 2;
+    CAFFE_ENFORCE_EQ(OutputSize(), output_size);
+
+    auto& dY = Input(0);
+    const auto* dY_data = dY.template data<DstType>();
+    int size = dY.size();
+
+    // The input size should be the input size of the forward op plus 1
+    for (int i = 0; i < InputSize() / 2; i++) {
+      auto& cur_w = Input(2 * i + 2);
+      CAFFE_ENFORCE_EQ(cur_w.size(), 1);
+      auto* cur_dX = Output(i);
+      cur_dX->ResizeLike(dY);
+
+      math::Scale<DstType, Context>(
+          size,
+          cur_w.template data<float>(),
+          dY_data,
+          cur_dX->template mutable_data<DstType>(),
+          &context_);
+
+      if (grad_on_w_) {
+        auto& cur_X = Input(2 * i + 1);
+        CAFFE_ENFORCE_EQ(cur_X.size(), size);
+        auto* cur_dw = Output(i + output_size / 2);
+        cur_dw->Resize(1);
+        math::Dot<DstType, Context>(
+            size,
+            dY_data,
+            cur_X.template data<DstType>(),
+            cur_dw->template mutable_data<float>(),
+            &context_);
+      }
+    }
+
+    return true;
+  }
+
+  bool RunOnDevice() override;
+
+ private:
+  bool grad_on_w_;
 };
 
 /**
@@ -584,10 +662,18 @@ class ScatterAssignOp : public Operator<Context> {
                    &ScatterAssignOp::DoRun<int32_t, float>},
                   {{TensorProto_DataType_INT32, TensorProto_DataType_FLOAT16},
                    &ScatterAssignOp::DoRun<int32_t, float16>},
+                  {{TensorProto_DataType_INT32, TensorProto_DataType_INT32},
+                   &ScatterAssignOp::DoRun<int32_t, int32_t>},
+                  {{TensorProto_DataType_INT32, TensorProto_DataType_INT64},
+                   &ScatterAssignOp::DoRun<int32_t, int64_t>},
                   {{TensorProto_DataType_INT64, TensorProto_DataType_FLOAT},
                    &ScatterAssignOp::DoRun<int64_t, float>},
                   {{TensorProto_DataType_INT64, TensorProto_DataType_FLOAT16},
-                   &ScatterAssignOp::DoRun<int64_t, float16>}}) {}
+                   &ScatterAssignOp::DoRun<int64_t, float16>},
+                  {{TensorProto_DataType_INT64, TensorProto_DataType_INT32},
+                   &ScatterAssignOp::DoRun<int64_t, int32_t>},
+                  {{TensorProto_DataType_INT64, TensorProto_DataType_INT64},
+                   &ScatterAssignOp::DoRun<int64_t, int64_t>}}) {}
 
   bool RunOnDevice() override {
     const auto& data = Input(DATA);
@@ -646,6 +732,17 @@ class ScatterAssignOp : public Operator<Context> {
     T* data = output->template mutable_data<T>();
     const Index* idxs = indices.template data<Index>();
     const T* slicesData = slices.template data<T>();
+    DoScatterAssign(data, idxs, slicesData, N, K, block_size);
+  }
+
+  template <typename Index, typename T>
+  void DoScatterAssign(
+      T* data,
+      const Index* idxs,
+      const T* slicesData,
+      TIndex N,
+      TIndex K,
+      TIndex block_size) {
     for (int i = 0; i < K; ++i) {
       Index idx = idxs[i];
       // double-checking the indices, but it's fine as it's DCHECK only
@@ -995,115 +1092,6 @@ class LengthsToShapeOp : public Operator<Context> {
 
     return true;
   }
-};
-
-template <class Context>
-class SqueezeOp : public Operator<Context> {
- public:
-  USE_OPERATOR_CONTEXT_FUNCTIONS;
-  SqueezeOp(const OperatorDef& operator_def, Workspace* ws)
-      : Operator<Context>(operator_def, ws),
-        dims_(OperatorBase::GetRepeatedArgument<int>("dims")) {
-    auto originalSize = dims_.size();
-    CAFFE_ENFORCE(originalSize > 0, "Parameter `dims` must be provided.");
-
-    std::sort(dims_.begin(), dims_.end());
-    dims_.erase(std::unique(dims_.begin(), dims_.end()), dims_.end());
-    if (dims_.size() < originalSize) {
-      LOG(WARNING) << "Parameter `dims` has repeated dimensions.";
-    }
-    CAFFE_ENFORCE(dims_.front() >= 0, "Dimension ids must be non-negative.");
-  }
-
-  bool RunOnDevice() override {
-    auto& input = Input(0);
-    auto* output = Output(0);
-    output->CopyFrom(input, &context_);
-
-    CAFFE_ENFORCE_GT(
-        input.ndim(),
-        dims_.back(),
-        "Input needs at least ",
-        (dims_.back() + 1),
-        " dimensions.");
-
-    std::vector<int> newDims = ComputeDims(input.dims(), dims_);
-    output->Reshape(newDims);
-    return true;
-  }
-
-  static std::vector<int> ComputeDims(
-      std::vector<TIndex> inputDims,
-      std::vector<int> dims) {
-    int j = 0;
-    std::vector<int> newDims;
-    for (int i = 0; i < inputDims.size(); ++i) {
-      if (j < dims.size() && dims[j] == i) {
-        CAFFE_ENFORCE_EQ(
-            inputDims[i],
-            1,
-            "Dimension ",
-            i,
-            " of input must be 1",
-            " instead of ",
-            inputDims[i],
-            ".");
-        ++j;
-        continue;
-      }
-      newDims.push_back(inputDims.at(i));
-    }
-    return newDims;
-  }
-
- private:
-  vector<int> dims_;
-
- public:
-  DISABLE_COPY_AND_ASSIGN(SqueezeOp);
-};
-
-template <class Context>
-class ExpandDimsOp : public Operator<Context> {
- public:
-  USE_OPERATOR_CONTEXT_FUNCTIONS;
-  ExpandDimsOp(const OperatorDef& operator_def, Workspace* ws)
-      : Operator<Context>(operator_def, ws),
-        dims_(OperatorBase::GetRepeatedArgument<int>("dims")) {
-    auto originalSize = dims_.size();
-    CAFFE_ENFORCE(originalSize > 0, "Parameter `dims` must be provided.");
-    std::sort(dims_.begin(), dims_.end());
-    dims_.erase(std::unique(dims_.begin(), dims_.end()), dims_.end());
-    if (dims_.size() < originalSize) {
-      LOG(WARNING) << "Parameter `dims` has repeated dimensions.";
-    }
-    CAFFE_ENFORCE(dims_.front() >= 0, "Dimension ids must be non-negative.");
-  }
-
-  bool RunOnDevice() override {
-    auto& input = Input(0);
-    auto* output = Output(0);
-    output->CopyFrom(input, &context_);
-    if (dims_.empty()) {
-      return true;
-    }
-
-    auto newDims = input.dims();
-    CAFFE_ENFORCE_GE(
-        input.dims().size() + dims_.size(),
-        dims_.back() + 1,
-        "Input needs at least ",
-        (1 + dims_.back() - dims_.size()),
-        " dimensions given `dims`.");
-    for (const auto dim : dims_) {
-      newDims.insert(newDims.begin() + dim, 1);
-    }
-    output->Reshape(newDims);
-    return true;
-  }
-
- private:
-  vector<int> dims_;
 };
 
 template <class Context>
