@@ -35,7 +35,7 @@ const std::vector<std::string> kStyleNames = {"night_b", "flowers"};
 std::vector<std::unique_ptr<caffe2::Predictor>> predictors;
 
 caffe2::NetDef loadNet(AAssetManager *asset_manager, const std::string &filename) {
-    contAAsset *asset = AAssetManager_open(asset_manager, filename.c_str(), AASSET_MODE_BUFFER);
+    AAsset *asset = AAssetManager_open(asset_manager, filename.c_str(), AASSET_MODE_BUFFER);
     const void *data = AAsset_getBuffer(asset);
     const off_t length = AAsset_getLength(asset);
 

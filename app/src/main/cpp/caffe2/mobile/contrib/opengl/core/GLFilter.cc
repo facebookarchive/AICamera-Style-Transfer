@@ -14,36 +14,9 @@
  * limitations under the License.
  */
 
-#include "caffe2/core/logging.h"
+
 #include "GLFilter.h"
 #include <sstream>
-
-#define GL_CHECK(_cond) do { \
-    _cond; \
-    GLenum err = glGetError(); \
-    switch (err) {  \
-      case GL_NO_ERROR:  \
-        break;  \
-      case GL_INVALID_ENUM:  \
-        throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "GL_INVALID_ENUM: " << err; }); \
-        break; \
-      case GL_INVALID_VALUE:  \
-        throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "GL_INVALID_VALUE: " << err; }); \
-        break; \
-      case GL_INVALID_OPERATION:  \
-        throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "GL_INVALID_OPERATION: " << err; }); \
-        break; \
-      case GL_INVALID_FRAMEBUFFER_OPERATION:  \
-        throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "GL_INVALID_FRAMEBUFFER_OPERATION: " << err; }); \
-        break; \
-      case GL_OUT_OF_MEMORY:  \
-        throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "GL_OUT_OF_MEMORY: " << err; }); \
-        break; \
-      default:  \
-        throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "OpenGL error: " << err; }); \
-        break; \
-    } \
-} while(0)
 
 GLFilter::GLFilter(const std::string _kernel_name,
                    const std::string _vertex_shader,
@@ -63,9 +36,9 @@ GLFilter::GLFilter(const std::string _kernel_name,
     gl_log(GL_VERBOSE, "created program %d\n", program);
   } else {
     releaseBuffers();
-    GL_CHECK();
+
     throwRuntimeError(
-        [&](std::stringstream& errmsg) { errmsg << "Problem initializing @@@@@@@@@@@ OpenGL program"; });
+        [&](std::stringstream& errmsg) { errmsg << "Problem initializing OpenGL program"; });
   }
 }
 
@@ -231,25 +204,19 @@ void GLFilter::run(const std::vector<texture_attachment>& input,
   }
 
   glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer);
-  GL_CHECK();
   checkGLError([&](std::stringstream& errmsg) { errmsg << "glBindFramebuffer"; });
-  GL_CHECK();
 
   // Set up the output textures
   for (int i = 0; i < output.size(); i++) {
     GLenum target = output[i]->target();
     GLuint texture = output[i]->name();
-    GL_CHECK();
 
     glBindTexture(target, texture);
-    GL_CHECK();
     glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, target, texture, 0);
-    GL_CHECK();
 
     checkGLError([&](std::stringstream& errmsg) {
       errmsg << "Unable to connect output texture " << texture << " at color attachment " << i;
     });
-    GL_CHECK();
 
     gl_log(GL_VERBOSE, "connected output texture %d to color attachment %d\n", texture, i);
   }
@@ -261,10 +228,8 @@ void GLFilter::run(const std::vector<texture_attachment>& input,
         GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
 
     glDrawBuffers(attachments_number, attachments);
-    GL_CHECK();
 
     int fbs = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    GL_CHECK();
 
     if (fbs != GL_FRAMEBUFFER_COMPLETE) {
       throwRuntimeError(
@@ -275,7 +240,6 @@ void GLFilter::run(const std::vector<texture_attachment>& input,
   }
 
   glUseProgram(program);
-  GL_CHECK();
   checkGLError([&](std::stringstream& errmsg) { errmsg << "glUseProgram"; });
 
   // Set up the input textures
@@ -284,31 +248,26 @@ void GLFilter::run(const std::vector<texture_attachment>& input,
     if (input[i].uniform->location >= 0) {
       GLenum target = input[i].texture->target();
       GLuint texture = input[i].texture->name();
-      GL_CHECK();
 
       glActiveTexture(texture_idx);
       glBindTexture(target, texture);
       glUniform1i(input[i].uniform->location, texture_idx - GL_TEXTURE0);
-      GL_CHECK();
 
       checkGLError([&](std::stringstream& errmsg) {
         errmsg << ": Unable to attach input texture " << texture << " to uniform "
                << input[i].uniform->name << ":" << input[i].uniform->location << " at index "
                << texture_idx - GL_TEXTURE0;
       });
-      GL_CHECK();
 
       gl_log(GL_VERBOSE,
              "connected input texture %d to texture unit %d\n",
              texture,
              texture_idx - GL_TEXTURE0);
-             GL_CHECK();
     } else {
       gl_log(GL_VERBOSE, "something wrong happened when i = %d\n", i);
-      GL_CHECK();
     }
   }
-GL_CHECK();
+
   // Caller supplied uniforms initializer
   if (uniforms_initializer) {
     uniforms_initializer();
@@ -484,43 +443,22 @@ bool GLFilter::createProgram(const GLchar* vertSource,
   // Create shader program
   prog = glCreateProgram();
 
-  if (status != 1) {
-    throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "compileShader000000"; });
-  }
-
   // Create and compile vertex shader
-  if (status != 1) {
-    throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "compileShader-1"; });
-  }
   status *= compileShader(GL_VERTEX_SHADER, 1, &vertSource, &vertShader);
-  if (status != 1) {
-    throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "compileShader1"; });
-  }
 
   // Create and compile fragment shader
   status *= compileShader(GL_FRAGMENT_SHADER, 1, &fragSource, &fragShader);
-  if (status != 1) {
-    throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "compileShader2"; });
-  }
-
-  GL_CHECK();
 
   // Attach vertex shader to program
   glAttachShader(prog, vertShader);
 
-  GL_CHECK();
-
   // Attach fragment shader to program
   glAttachShader(prog, fragShader);
-
-  GL_CHECK();
 
   // Bind attribute locations
   // This needs to be done prior to linking
   for (auto&& attribute : attributes_) {
     glBindAttribLocation(prog, attribute->location, attribute->name.c_str());
-
-    GL_CHECK();
 
     checkGLError([&](std::stringstream& errmsg) {
       errmsg << "Couldn't bind attribute: " << attribute->name << " at location "
@@ -531,16 +469,10 @@ bool GLFilter::createProgram(const GLchar* vertSource,
   // Link program
   status *= linkProgram(prog);
 
-  if (status != 1) {
-    throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "linkProgram"; });
-  }
-
   // Get locations of uniforms
   if (status) {
     for (auto&& uniform : uniforms_) {
       uniform->location = glGetUniformLocation(prog, uniform->name.c_str());
-
-      GL_CHECK();
 
       checkGLError([&](std::stringstream& errmsg) {
         errmsg << "Couldn't resolve uniform: " << uniform->name;
@@ -554,16 +486,12 @@ bool GLFilter::createProgram(const GLchar* vertSource,
              uniform_block->name.c_str(),
              uniform_block->location);
 
-             GL_CHECK();
-
       checkGLError([&](std::stringstream& errmsg) {
         errmsg << "Couldn't resolve uniform block: " << uniform_block->name;
       });
     }
 
     *program = prog;
-  } else {
-    throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "other badness"; });
   }
 
   // Release vertex and fragment shaders
@@ -571,17 +499,9 @@ bool GLFilter::createProgram(const GLchar* vertSource,
     glDetachShader(prog, vertShader);
     glDeleteShader(vertShader);
   }
-  GL_CHECK();
-  if (status != 1) {
-    throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "vertShader"; });
-  }
   if (fragShader) {
     glDetachShader(prog, fragShader);
     glDeleteShader(fragShader);
-  }
-  GL_CHECK();
-  if (status != 1) {
-    throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "fragShader"; });
   }
 
   return status == 1;
@@ -594,87 +514,47 @@ GLint GLFilter::compileShader(GLenum target,
                               GLsizei count,
                               const GLchar** sources,
                               GLuint* shader) const {
-  GLint status = 1;
+  GLint status;
 
   *shader = glCreateShader(target);
-  if (status != 1 || !shader){
-    throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "glCreateShader"; });
-  }
-  GL_CHECK();
-
   glShaderSource(*shader, count, sources, NULL);
-  if (status != 1){
-    throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "glShaderSource"; });
-  }
-  GL_CHECK();
-
   glCompileShader(*shader);
-  if (status != 1){
-  throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "glCompileShader5"; });
-}
-
-  GL_CHECK();
 
   GLint logLength = 0;
   glGetShaderiv(*shader, GL_INFO_LOG_LENGTH, &logLength);
-  if (status != 1){
-  throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "glGetShaderiv1"; });
-}
-  GL_CHECK();
   if (logLength > 0) {
     std::vector<GLchar> log(logLength);
     glGetShaderInfoLog(*shader, logLength, &logLength, &log[0]);
     gl_log(GL_ERR, "Shader compile log:\n%s", &log[0]);
-    GL_CHECK();
   }
 
   glGetShaderiv(*shader, GL_COMPILE_STATUS, &status);
-  if (status != 1){
-  throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "glGetShaderiv2"; });
-}
-  GL_CHECK();
   if (status == 0) {
     int i;
 
     gl_log(GL_ERR, "Failed to compile shader:\n");
     for (i = 0; i < count; i++)
       gl_log(GL_ERR, "%s", sources[i]);
-    GL_CHECK();
   }
-  if (status != 1){
-  throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "glCompileShader54444444"; });
-}
 
   return status;
 }
 
 /* Link a program with all currently attached shaders */
 GLint GLFilter::linkProgram(GLuint program) const {
-  GLint status = 1;
+  GLint status;
 
   glLinkProgram(program);
-  if (status != 1){
-  throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "glLinkProgram"; });
-}
 
   GLint logLength = 0;
   glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLength);
-  if (status != 1){
-  throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "glGetProgramiv"; });
-}
   if (logLength > 0) {
     std::vector<GLchar> log(logLength);
     glGetProgramInfoLog(program, logLength, &logLength, &log[0]);
     gl_log(GL_ERR, "Program link log:\n%s", &log[0]);
-    if (status != 1){
-    throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "glGetProgramInfoLog"; });
-  }
   }
 
   glGetProgramiv(program, GL_LINK_STATUS, &status);
-  if (status != 1){
-  throwRuntimeError([&](std::stringstream& errmsg) { errmsg << "glGetProgramiv2"; });
-}
   if (status == 0)
     gl_log(GL_ERR, "Failed to link program %d\n", program);
 
@@ -683,7 +563,7 @@ GLint GLFilter::linkProgram(GLuint program) const {
 
 /* Validate a program (for i.e. inconsistent samplers) */
 GLint GLFilter::validateProgram(GLuint program) const {
-  GLint status = 1;
+  GLint status;
 
   glValidateProgram(program);
 

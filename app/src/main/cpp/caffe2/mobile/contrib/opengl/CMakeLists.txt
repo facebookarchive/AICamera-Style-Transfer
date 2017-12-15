@@ -4,7 +4,6 @@ if(USE_MOBILE_OPENGL AND (ANDROID OR IOS))
 
   if (ANDROID)
     add_subdirectory(android)
-    add_subdirectory(test)
   endif()
 
   if (IOS)
