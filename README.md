@@ -1,20 +1,37 @@
-## AICamera
+## AICamera-Style-Transfer
 
-AICamera is a demo app that was displayed at Facebook's F8 event.  The previous version (also on this repo) was getting quite old and attempted to demonstrate a build system that happened inside Android Studio.  This led to some hacky techniques and I decided to rewrite the demo with a prebuilt Caffe2 library (which can be built using `build_android.sh` in the Caffe2 source).
 
-![example](https://thumbs.gfycat.com/FlimsyInbornIndianabat-size_restricted.gif)
+<p align="center">
+  <img src="extra/sample.jpg">
+  <br><br>
+  Neural style transfer on your Android phone.
+</p>
 
-### Download
+[AICamera](https://github.com/bwasti/AICamera) is an Android application showcasing implementations of [Caffe2](https://github.com/caffe2/caffe2)
+models for mobile. This particular fork implements [Neural Style Transfer](https://arxiv.org/abs/1508.06576), a
+unique way of applying artistic styles to photos using deep neural networks.
 
-    git clone https://github.com/bwasti/AICamera.git
+## Requirements
 
-### Build
+The app depends mainly on the [Caffe2](https://github.com/caffe2/caffe2) library
+to run the models, and
+[libyuv](https://chromium.googlesource.com/libyuv/libyuv/) which is used for
+image processing. All dependencies are contained in this repository, so no
+further setup is required.
 
-Click the green play button in Android Studio 2.2 and everything should build :)
+If you do want to build the dependencies yourself (for example to pull in more
+recent versions of one of the libraries), here are a few steps:
 
-### Tests
+1. For Caffe2, clone the main repository and execute the `build_android.sh`
+script found in the `scripts/` folder. This will produce artifacts like
+`libcaffe2.a` under the `build_android` folder. Copy these under `app/src/main/jniLibs/armeabi-v7a`.
+2. For `libyuv`, follow the steps
+[here](https://chromium.googlesource.com/libyuv/libyuv/+/master/docs/getting_started.md).
+If the build fails on macOS, consider building on Linux inside a
+[Docker](https://github.com/thyrlian/AndroidSDK) container.
 
-| Device             | Network       |  FPS  |
-| ------------------ | ------------- | ----- |
-| Samsung Galaxy S7  | SqueezeNet    |  5.8  |
-| Google Pixel       | SqueezeNet    |  5.7  |
+All of these steps assume you have a proper Android SDK and NDK environment in place.
+
+## Building
+
+Building the app is as easy as downloading [Android Studio](https://developer.android.com/studio/index.html) and pressing the green button.
