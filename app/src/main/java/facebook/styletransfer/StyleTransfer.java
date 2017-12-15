@@ -376,7 +376,7 @@ public class StyleTransfer extends Activity {
             final StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
 
             final Size[] previewSizes = map.getOutputSizes(SurfaceTexture.class);
-            mPreviewSize = previewSizes[previewSizes.length - 3];
+            mPreviewSize = previewSizes[previewSizes.length - 1];
             for (Size size : previewSizes) {
                 if (size.getWidth() < 500 && size.getHeight() < 500) {
                     mPreviewSize = size;

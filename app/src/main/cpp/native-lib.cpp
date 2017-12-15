@@ -65,6 +65,44 @@ caffe2::NetDef convertToOpenGL(caffe2::NetDef& init_net, caffe2::NetDef& predict
     }
 }
 
+caffe2::TensorCPU
+preprocessImage(const jbyte *Y,
+                const jbyte *U,
+                const jbyte *V,
+                int UVRowStride,
+                int UVPixelStride,
+                int height,
+                int width) {
+
+    // Convert from YUV_420_8888 to ABGR.
+    caffe2::TensorCPU image_tensor;
+    image_tensor.Resize(1, height, width, kNumberOfChannels);
+    int return_code = libyuv::Android420ToARGB(
+            reinterpret_cast<const uint8_t *>(Y),
+            width,
+            reinterpret_cast<const uint8_t *>(U),
+            UVRowStride,
+            reinterpret_cast<const uint8_t *>(V),
+            UVRowStride,
+            UVPixelStride,
+            image_tensor.mutable_data<uint8_t>(),
+            width * 4,
+            width,
+            height);
+    CAFFE_ENFORCE_EQ(return_code, 0);
+
+    // Swap axes.
+    caffe2::TensorCPU rotated_tensor;
+    rotated_tensor.ResizeLike(image_tensor);
+    return_code = libyuv::ARGBToBGRA(image_tensor.data<uint8_t>(), 4 * width,
+                                     rotated_tensor.mutable_data<uint8_t>(),
+                                     4 * width,
+                                     width,
+                                     height);
+    CAFFE_ENFORCE_EQ(return_code, 0);
+
+    return rotated_tensor;
+}
 } // namespace
 
 extern "C"
@@ -114,7 +152,10 @@ Java_facebook_styletransfer_StyleTransfer_transformImageWithCaffe2(
     static size_t iterations = 0;
     static size_t total_fps = 0;
 
-    CAFFE_ENFORCE(styleIndex >= 0 && styleIndex < predictors.size());
+    if (styleIndex < 0 || styleIndex >= predictors.size()) {
+        ANDROID_LOG(ERROR, "Style index out of range");
+        return nullptr;
+    }
 
     caffe2::Timer timer;
     timer.Start();
@@ -123,42 +164,40 @@ Java_facebook_styletransfer_StyleTransfer_transformImageWithCaffe2(
     const jbyte *U = env->GetByteArrayElements(UArray, nullptr);
     const jbyte *V = env->GetByteArrayElements(VArray, nullptr);
 
-    // Convert from YUV_420_8888 to ABGR.
-    caffe2::TensorCPU image_tensor;
-    image_tensor.Resize(1, height, width, kNumberOfChannels);
-    int return_code = libyuv::Android420ToABGR(
-            reinterpret_cast<const uint8_t *>(Y),
-            width,
-            reinterpret_cast<const uint8_t *>(U),
-            UVRowStride,
-            reinterpret_cast<const uint8_t *>(V),
-            UVRowStride,
-            UVPixelStride,
-            image_tensor.mutable_data<uint8_t>(),
-            width * 4,
-            width,
-            height);
-    CAFFE_ENFORCE_EQ(return_code, 0);
+    caffe2::TensorCPU image_tensor =
+            preprocessImage(Y, U, V, UVRowStride, UVPixelStride, height, width);
 
     // Call the Caffe2 predictor.
     std::vector<caffe2::TensorCPU *> output;
     predictors[styleIndex]->run({&image_tensor}, &output);
-    CAFFE_ENFORCE(!output.empty());
+    if (output.empty()) {
+        ANDROID_LOG(ERROR, "Output of prediction was empty");
+        return nullptr;
+    }
 
     const caffe2::TensorCPU *output_tensor = output.front();
-    CAFFE_ENFORCE(output_tensor != nullptr);
+    if (output_tensor == nullptr) {
+        ANDROID_LOG(ERROR, "Output tensor was null");
+        return nullptr;
+    }
 
     // "pack" ABGR pixels into ints.
     const int* pixel_buffer = reinterpret_cast<const int*>(output_tensor->data<uint8_t>());
-    CAFFE_ENFORCE(pixel_buffer != nullptr);
+    if (pixel_buffer == nullptr) {
+        ANDROID_LOG(ERROR, "Pixel buffer was null");
+        return nullptr;
+    }
 
     // Convert to native Java array.
     jintArray output_array = env->NewIntArray(output_tensor->size());
-    CAFFE_ENFORCE(output_array != nullptr);
+    if (output_array == nullptr) {
+        ANDROID_LOG(ERROR, "Output array was null");
+        return nullptr;
+    }
     env->SetIntArrayRegion(output_array, 0, output_tensor->size(), pixel_buffer);
 
     total_fps += timer.MilliSeconds();
-    ANDROID_LOG(ERROR, "StyleTransfer Average FPS: %.3f", 1000.0/(total_fps / ++iterations));
+    ANDROID_LOG(INFO, "StyleTransfer Average FPS: %.3f", 1000.0/(total_fps / ++iterations));
 
     return output_array;
 
