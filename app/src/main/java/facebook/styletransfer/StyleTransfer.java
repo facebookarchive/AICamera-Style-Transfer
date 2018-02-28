@@ -130,37 +130,11 @@ public class StyleTransfer extends Activity {
     private class GestureListener extends GestureDetector.SimpleOnGestureListener {
         @Override
         public boolean onDoubleTap(MotionEvent e) {
-            if (mStyleIndex != 0) {
-                mStyleIndex = 0;
-                mTextView.setText(STYLES[0]);
-                mViewSwitcher.showPrevious();
-            }
             return true;
         }
 
         @Override
         public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
-            if (velocityX > 0) {
-                if (mStyleIndex > 0) {
-                    if (mStyleIndex == 1) {
-                        mViewSwitcher.showPrevious();
-                    }
-                    mStyleIndex -= 1;
-                }
-                Log.i(TAG, "Swipe right: " + mStyleIndex);
-            } else if (velocityX < 0) {
-                if (mStyleIndex < STYLES.length - 1) {
-                    if (mStyleIndex == 0) {
-                        mViewSwitcher.showNext();
-                    }
-                    mStyleIndex += 1;
-                }
-
-                Log.i(TAG, "Swipe left: " + mStyleIndex);
-            }
-
-            mTextView.setText(STYLES[mStyleIndex]);
-
             return true;
         }
     }
@@ -290,7 +264,7 @@ public class StyleTransfer extends Activity {
     private Handler mBackgroundHandler;
     private CaptureRequest.Builder mCaptureRequestBuilder;
     private HandlerThread mBackgroundThread;
-    private int mStyleIndex = 0;
+    private int mStyleIndex = 1;
     private GestureDetector mGestureDetector;
     private ViewSwitcher mViewSwitcher;
     private AssetManager mAssetManager;
