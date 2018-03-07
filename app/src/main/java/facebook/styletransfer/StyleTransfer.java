@@ -129,6 +129,19 @@ public class StyleTransfer extends Activity {
 
     private class GestureListener extends GestureDetector.SimpleOnGestureListener {
         @Override
+        public boolean onSingleTapUp(MotionEvent e) {
+            mStyleIndex = (mStyleIndex + 1) % STYLES.length;
+            Log.i(TAG, "Single tap: " + mStyleIndex);
+            if (mStyleIndex == 0) {
+                mViewSwitcher.showPrevious();
+            } else if (mStyleIndex == 1) {
+                mViewSwitcher.showNext();
+            }
+            mTextView.setText(STYLES[mStyleIndex]);
+            return true;
+        }
+
+        @Override
         public boolean onDoubleTap(MotionEvent e) {
             return true;
         }
@@ -252,7 +265,7 @@ public class StyleTransfer extends Activity {
     private static final int REQUEST_CAMERA_PERMISSION = 200;
     private CameraDevice mCameraDevice;
     private static final String[] STYLES = {
-            "Preview",
+            "Tap to Switch",
             "Night",
             "Flowers",
     };
@@ -264,7 +277,7 @@ public class StyleTransfer extends Activity {
     private Handler mBackgroundHandler;
     private CaptureRequest.Builder mCaptureRequestBuilder;
     private HandlerThread mBackgroundThread;
-    private int mStyleIndex = 1;
+    private int mStyleIndex = 0;
     private GestureDetector mGestureDetector;
     private ViewSwitcher mViewSwitcher;
     private AssetManager mAssetManager;

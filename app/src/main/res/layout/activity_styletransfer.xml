@@ -45,7 +45,7 @@
         android:layout_marginBottom="16dp"
         android:background="#88000000"
         android:gravity="center"
-        android:text="Preview"
+        android:text="Tap to Switch"
         android:textAllCaps="true"
         android:textColor="#CCffffff"
         android:textSize="24sp"
